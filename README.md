@@ -154,12 +154,12 @@ One Piece deploys to IBM Cloud by driving the IBM Cloud CLI (`ibmcloud`) in the 
 
 #### Requirements (IBM Cloud)
 
-- IBM Cloud account with access to **Cloud Foundry** (org/space).
+- IBM Cloud account with access to **Code Engine**.
 - IBM Cloud API key.
 - IBM Cloud CLI installed and available on PATH:
   - Docs: https://cloud.ibm.com/docs/cli
-- IBM Cloud **Cloud Foundry** plugin installed (required because the deploy flow uses `ibmcloud cf ...`):
-  - `ibmcloud plugin install cloud-foundry`
+- IBM Cloud **Code Engine** plugin installed:
+  - `ibmcloud plugin install code-engine`
 
 #### Setup Steps
 
@@ -169,7 +169,7 @@ One Piece deploys to IBM Cloud by driving the IBM Cloud CLI (`ibmcloud`) in the 
    ibmcloud --version
    ```
 
-2. Install Cloud Foundry plugin and verify:
+2. Install Code Engine plugin and verify:
 
    ```bash
    ibmcloud plugin list
@@ -179,12 +179,12 @@ One Piece deploys to IBM Cloud by driving the IBM Cloud CLI (`ibmcloud`) in the 
 
    **Windows**
    ```cmd
-   java -jar target\quarkus-app\quarkus-run.jar settings --ibmcloud-api-key YOUR_KEY --ibmcloud-region us-south
+   java -jar target\quarkus-app\quarkus-run.jar settings --ibmcloud-api-key YOUR_KEY --ibmcloud-region us-south --ibmcloud-resource-group Default --ibmcloud-ce-project my-ce-project
    ```
 
    **Linux/macOS**
    ```bash
-   java -jar target/quarkus-app/quarkus-run.jar settings --ibmcloud-api-key YOUR_KEY --ibmcloud-region us-south
+   java -jar target/quarkus-app/quarkus-run.jar settings --ibmcloud-api-key YOUR_KEY --ibmcloud-region us-south --ibmcloud-resource-group Default --ibmcloud-ce-project my-ce-project
    ```
 
 4. Deploy:
@@ -199,7 +199,7 @@ One Piece deploys to IBM Cloud by driving the IBM Cloud CLI (`ibmcloud`) in the 
    java -jar target/quarkus-app/quarkus-run.jar deploy --target ibmcloud --project-dir . --app-name my-app
    ```
 
-After a successful push, the CLI prints the live route based on the real `ibmcloud cf app` output.
+During deploy, Code Engine builds and pushes the container image for you from local source code (no Docker required) using `ibmcloud ce application create --build-source .`. For more details, see: https://cloud.ibm.com/docs/codeengine?topic=codeengine-app-local-source-code
 
 ### Step 8: Running Tests
 
@@ -286,9 +286,9 @@ chmod +x mvnw
    ```bash
    ibmcloud --version
    ```
-3. Install Cloud Foundry plugin:
+3. Install Code Engine plugin:
    ```bash
-   ibmcloud plugin install cloud-foundry
+   ibmcloud plugin install code-engine
    ```
 
 #### Issue 6: Build fails with "Out of memory"

@@ -185,8 +185,8 @@ public class DeployCommand implements Runnable {
             String configRegion = ibmCloudConfig.getRegion();
             finalRegion = (configRegion != null && !configRegion.isBlank()) ? configRegion.trim() : "us-south";
         }
-        String org = ibmCloudConfig.getOrg();
-        String space = ibmCloudConfig.getSpace();
+        String resourceGroup = ibmCloudConfig.getResourceGroup();
+        String codeEngineProject = ibmCloudConfig.getCodeEngineProject();
 
         formatter.println(formatter.info("App name: " + appName));
         formatter.println(formatter.info("Region: " + finalRegion));
@@ -204,6 +204,12 @@ public class DeployCommand implements Runnable {
             return;
         }
 
+        if (!ibmCloudExecutor.isPluginInstalled("code-engine")) {
+            formatter.println(formatter.errorMessage("IBM Cloud Code Engine plugin not found. Install it first to use deploy."));
+            formatter.println(formatter.muted("ibmcloud plugin install code-engine"));
+            return;
+        }
+
         progress.startSpinner("Logging in to IBM Cloud");
         try {
             boolean loggedIn = ibmCloudExecutor.login(apiKey, finalRegion);
@@ -218,20 +224,39 @@ public class DeployCommand implements Runnable {
             return;
         }
 
-        if ((org != null && !org.isBlank()) || (space != null && !space.isBlank())) {
-            progress.startSpinner("Targeting Cloud Foundry org/space");
+        if (resourceGroup != null && !resourceGroup.isBlank()) {
+            progress.startSpinner("Targeting resource group");
             try {
-                boolean targeted = ibmCloudExecutor.targetCf(org, space);
+                boolean targeted = ibmCloudExecutor.targetResourceGroup(resourceGroup);
                 if (!targeted) {
-                    progress.error("Targeting Cloud Foundry failed");
+                    progress.error("Targeting resource group failed");
                     return;
                 }
-                progress.success("Cloud Foundry target set");
+                progress.success("Resource group target set");
             } catch (Exception e) {
-                progress.error("Targeting Cloud Foundry failed");
+                progress.error("Targeting resource group failed");
                 formatter.println(formatter.muted(e.getMessage()));
                 return;
             }
+        }
+
+        if (codeEngineProject == null || codeEngineProject.isBlank()) {
+            formatter.println(formatter.errorMessage("Code Engine project is not configured. Run 'onepiece settings' to set --ibmcloud-ce-project."));
+            return;
+        }
+
+        progress.startSpinner("Preparing Code Engine project");
+        try {
+            boolean ok = ibmCloudExecutor.ensureCodeEngineProject(codeEngineProject);
+            if (!ok) {
+                progress.error("Failed to prepare Code Engine project");
+                return;
+            }
+            progress.success("Code Engine project ready: " + codeEngineProject.trim());
+        } catch (Exception e) {
+            progress.error("Failed to prepare Code Engine project");
+            formatter.println(formatter.muted(e.getMessage()));
+            return;
         }
 
         ProjectAnalysis analysis;
@@ -245,36 +270,15 @@ public class DeployCommand implements Runnable {
             return;
         }
 
-        String buildTool = analysis.getBuildTool() != null ? analysis.getBuildTool() : "Maven";
-        String buildpack = ibmCloudExecutor.detectBuildpack(analysis.getFramework() != null ? analysis.getFramework() : "java");
-
-        progress.startSpinner("Building application (" + buildTool + ")");
+        progress.startSpinner("Deploying to IBM Cloud (Code Engine)");
         try {
-            boolean built = ibmCloudExecutor.buildApplication(projectPath.toString(), buildTool);
-            if (!built) {
-                progress.error("Build failed");
-                return;
-            }
-            progress.success("Build successful");
-        } catch (Exception e) {
-            progress.error("Build failed");
-            formatter.println(formatter.muted(e.getMessage()));
-            return;
-        }
-
-        try {
-            String pathToPush = ibmCloudExecutor.detectDeployPath(projectPath.toString(), buildTool);
-            ibmCloudExecutor.generateManifest(projectPath.toString(), appName, buildpack, 512, 1, pathToPush, true);
-        } catch (Exception e) {
-            formatter.println(formatter.warningMessage("Failed to generate manifest.yml"));
-        }
-
-        progress.startSpinner("Deploying to IBM Cloud (Cloud Foundry)");
-        try {
-            boolean pushed = ibmCloudExecutor.pushApplication(appName, projectPath.toString());
-            if (!pushed) {
-                progress.error("Deploy failed");
-                return;
+            IbmCloudExecutor.CommandResult created = ibmCloudExecutor.createCodeEngineAppFromLocalSource(appName, projectPath.toString());
+            if (!created.isSuccess()) {
+                IbmCloudExecutor.CommandResult updated = ibmCloudExecutor.updateCodeEngineAppFromLocalSource(appName, projectPath.toString());
+                if (!updated.isSuccess()) {
+                    progress.error("Deploy failed");
+                    return;
+                }
             }
             progress.success("Deploy complete");
         } catch (Exception e) {
@@ -285,7 +289,7 @@ public class DeployCommand implements Runnable {
 
         String status;
         try {
-            status = ibmCloudExecutor.getAppStatus(appName);
+            status = ibmCloudExecutor.getCodeEngineApp(appName);
         } catch (Exception e) {
             status = null;
         }
@@ -293,7 +297,7 @@ public class DeployCommand implements Runnable {
         formatter.println(formatter.success("✅ Deployment Complete!"));
         formatter.println("");
 
-        String liveUrl = getLiveUrlFromCfOutput(status);
+        String liveUrl = ibmCloudExecutor.extractFirstUrl(status);
         if (liveUrl != null) {
             formatter.println(formatter.bold("🌐 Your app is live at:"));
             formatter.println(formatter.highlight("   " + liveUrl));
@@ -301,41 +305,12 @@ public class DeployCommand implements Runnable {
         }
         
         if (status != null && !status.isBlank()) {
-            formatter.println(formatter.bold("📊 ibmcloud cf app output:"));
+            formatter.println(formatter.bold("📊 ibmcloud ce application get output:"));
             formatter.println(formatter.separator());
             formatter.println(status.trim());
             formatter.println(formatter.separator());
             formatter.println("");
         }
-    }
-
-    private String getLiveUrlFromCfOutput(String cfAppOutput) {
-        if (cfAppOutput == null || cfAppOutput.isBlank()) {
-            return null;
-        }
-        for (String line : cfAppOutput.split("\n")) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) {
-                continue;
-            }
-            String lower = trimmed.toLowerCase();
-            if (!lower.startsWith("routes:")) {
-                continue;
-            }
-            String routes = trimmed.substring(trimmed.indexOf(':') + 1).trim();
-            if (routes.isEmpty()) {
-                return null;
-            }
-            String first = routes.split("[,\\s]+")[0].trim();
-            if (first.isEmpty()) {
-                return null;
-            }
-            if (first.startsWith("http://") || first.startsWith("https://")) {
-                return first;
-            }
-            return "https://" + first;
-        }
-        return null;
     }
 }
 

@@ -16,13 +16,21 @@ public class IbmCloudConfig {
     @JsonProperty("space")
     private String space;
 
+    @JsonProperty("resourceGroup")
+    private String resourceGroup;
+
+    @JsonProperty("codeEngineProject")
+    private String codeEngineProject;
+
     public IbmCloudConfig() {}
 
-    public IbmCloudConfig(String apiKey, String region, String org, String space) {
+    public IbmCloudConfig(String apiKey, String region, String org, String space, String resourceGroup, String codeEngineProject) {
         this.apiKey = apiKey;
         this.region = region;
         this.org = org;
         this.space = space;
+        this.resourceGroup = resourceGroup;
+        this.codeEngineProject = codeEngineProject;
     }
 
     public String getApiKey() {
@@ -57,6 +65,22 @@ public class IbmCloudConfig {
         this.space = space;
     }
 
+    public String getResourceGroup() {
+        return resourceGroup;
+    }
+
+    public void setResourceGroup(String resourceGroup) {
+        this.resourceGroup = resourceGroup;
+    }
+
+    public String getCodeEngineProject() {
+        return codeEngineProject;
+    }
+
+    public void setCodeEngineProject(String codeEngineProject) {
+        this.codeEngineProject = codeEngineProject;
+    }
+
     public boolean isConfigured() {
         return apiKey != null && !apiKey.trim().isEmpty();
     }
@@ -68,4 +92,3 @@ public class IbmCloudConfig {
         return apiKey.substring(0, 7) + "..." + apiKey.substring(apiKey.length() - 4);
     }
 }
-

@@ -14,6 +14,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -63,6 +64,36 @@ public class IbmCloudExecutor {
         return result.exitCode == 0;
     }
 
+    public boolean isPluginInstalled(String pluginName) {
+        if (pluginName == null || pluginName.isBlank()) {
+            return false;
+        }
+        try {
+            List<String> command = List.of("ibmcloud", "plugin", "list");
+            CommandResult result = executeCommand(command, null);
+            if (result.exitCode != 0 || result.output == null) {
+                return false;
+            }
+            String needle = pluginName.trim().toLowerCase(Locale.ROOT);
+            return result.output.toLowerCase(Locale.ROOT).contains(needle);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public boolean targetResourceGroup(String resourceGroup) throws IOException, InterruptedException {
+        if (resourceGroup == null || resourceGroup.isBlank()) {
+            return true;
+        }
+        List<String> command = new ArrayList<>();
+        command.add("ibmcloud");
+        command.add("target");
+        command.add("-g");
+        command.add(resourceGroup.trim());
+        CommandResult result = executeCommand(command, null);
+        return result.exitCode == 0;
+    }
+
     /**
      * Target Cloud Foundry org and space
      */
@@ -84,6 +115,130 @@ public class IbmCloudExecutor {
 
         CommandResult result = executeCommand(command, null);
         return result.exitCode == 0;
+    }
+
+    public boolean codeEngineProjectExists(String projectName) throws IOException, InterruptedException {
+        if (projectName == null || projectName.isBlank()) {
+            return false;
+        }
+        List<String> command = new ArrayList<>();
+        command.add("ibmcloud");
+        command.add("ce");
+        command.add("project");
+        command.add("get");
+        command.add("--name");
+        command.add(projectName.trim());
+
+        CommandResult result = executeCommand(command, null);
+        return result.exitCode == 0;
+    }
+
+    public boolean createCodeEngineProject(String projectName) throws IOException, InterruptedException {
+        if (projectName == null || projectName.isBlank()) {
+            return false;
+        }
+        List<String> command = new ArrayList<>();
+        command.add("ibmcloud");
+        command.add("ce");
+        command.add("project");
+        command.add("create");
+        command.add("--name");
+        command.add(projectName.trim());
+
+        CommandResult result = executeCommand(command, null);
+        return result.exitCode == 0;
+    }
+
+    public boolean selectCodeEngineProject(String projectName) throws IOException, InterruptedException {
+        if (projectName == null || projectName.isBlank()) {
+            return false;
+        }
+        List<String> command = new ArrayList<>();
+        command.add("ibmcloud");
+        command.add("ce");
+        command.add("project");
+        command.add("select");
+        command.add("--name");
+        command.add(projectName.trim());
+
+        CommandResult result = executeCommand(command, null);
+        return result.exitCode == 0;
+    }
+
+    public boolean ensureCodeEngineProject(String projectName) throws IOException, InterruptedException {
+        if (projectName == null || projectName.isBlank()) {
+            return false;
+        }
+        if (!codeEngineProjectExists(projectName)) {
+            boolean created = createCodeEngineProject(projectName);
+            if (!created) {
+                return false;
+            }
+        }
+        return selectCodeEngineProject(projectName);
+    }
+
+    public CommandResult createCodeEngineAppFromLocalSource(String appName, String projectPath) throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>();
+        command.add("ibmcloud");
+        command.add("ce");
+        command.add("application");
+        command.add("create");
+        command.add("--name");
+        command.add(appName);
+        command.add("--build-source");
+        command.add(".");
+
+        return executeCommand(command, projectPath);
+    }
+
+    public CommandResult updateCodeEngineAppFromLocalSource(String appName, String projectPath) throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>();
+        command.add("ibmcloud");
+        command.add("ce");
+        command.add("application");
+        command.add("update");
+        command.add("--name");
+        command.add(appName);
+        command.add("--build-source");
+        command.add(".");
+
+        return executeCommand(command, projectPath);
+    }
+
+    public String getCodeEngineApp(String appName) throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>();
+        command.add("ibmcloud");
+        command.add("ce");
+        command.add("application");
+        command.add("get");
+        command.add("--name");
+        command.add(appName);
+
+        CommandResult result = executeCommand(command, null);
+        return result.output;
+    }
+
+    public String extractFirstUrl(String output) {
+        if (output == null || output.isBlank()) {
+            return null;
+        }
+        for (String line : output.split("\n")) {
+            String t = line.trim();
+            if (t.startsWith("https://") || t.startsWith("http://")) {
+                return t;
+            }
+            if (t.toLowerCase(Locale.ROOT).startsWith("url:")) {
+                String v = t.substring(t.indexOf(':') + 1).trim();
+                if (v.startsWith("https://") || v.startsWith("http://")) {
+                    return v;
+                }
+                if (!v.isEmpty()) {
+                    return "https://" + v;
+                }
+            }
+        }
+        return null;
     }
 
     /**

@@ -108,6 +108,18 @@ public class SettingsCommand implements Runnable {
     )
     String ibmCloudSpace;
 
+    @Option(
+        names = {"--ibmcloud-resource-group"},
+        description = "Default IBM Cloud resource group (stored in ~/.onepiece/config.json)"
+    )
+    String ibmCloudResourceGroup;
+
+    @Option(
+        names = {"--ibmcloud-ce-project"},
+        description = "Default IBM Cloud Code Engine project (stored in ~/.onepiece/config.json)"
+    )
+    String ibmCloudCodeEngineProject;
+
     private enum SettingsMenuOption {
         AI_PROVIDER("🤖", "AI Provider Configuration"),
         IBM_CLOUD("☁️", "IBM Cloud Deployment Credentials"),
@@ -165,7 +177,14 @@ public class SettingsCommand implements Runnable {
         }
 
         if (ibmCloudApiKey != null) {
-            configureIbmCloud(ibmCloudApiKey, ibmCloudRegion, ibmCloudOrg, ibmCloudSpace);
+            configureIbmCloud(
+                ibmCloudApiKey,
+                ibmCloudRegion,
+                ibmCloudOrg,
+                ibmCloudSpace,
+                ibmCloudResourceGroup,
+                ibmCloudCodeEngineProject
+            );
             return;
         }
 
@@ -1136,6 +1155,12 @@ public class SettingsCommand implements Runnable {
         if (current != null && current.isConfigured()) {
             formatter.println(formatter.info("Current:"));
             formatter.println("   API Key: " + current.getMaskedApiKey());
+            if (current.getResourceGroup() != null && !current.getResourceGroup().isBlank()) {
+                formatter.println("   Resource group: " + current.getResourceGroup().trim());
+            }
+            if (current.getCodeEngineProject() != null && !current.getCodeEngineProject().isBlank()) {
+                formatter.println("   Code Engine project: " + current.getCodeEngineProject().trim());
+            }
             if (current.getRegion() != null && !current.getRegion().isBlank()) {
                 formatter.println("   Region: " + current.getRegion().trim());
             }
@@ -1158,23 +1183,34 @@ public class SettingsCommand implements Runnable {
             return;
         }
 
+        String resourceGroup = menu.promptInput("Default resource group (press Enter to skip)");
+        String ceProject = menu.promptInput("Default Code Engine project (press Enter to skip)");
         String region = menu.promptInput("Default region (press Enter to skip)");
         String org = menu.promptInput("Default Cloud Foundry org (press Enter to skip)");
         String space = menu.promptInput("Default Cloud Foundry space (press Enter to skip)");
 
-        configureIbmCloud(apiKey, region, org, space);
+        configureIbmCloud(apiKey, region, org, space, resourceGroup, ceProject);
     }
 
-    private void configureIbmCloud(String apiKey, String region, String org, String space) {
+    private void configureIbmCloud(String apiKey, String region, String org, String space, String resourceGroup, String codeEngineProject) {
         progress.loading("💾 Saving configuration to ~/.onepiece/config.json");
         try {
             String normalizedApiKey = apiKey.trim();
             String normalizedRegion = region != null && !region.trim().isEmpty() ? region.trim() : null;
             String normalizedOrg = org != null && !org.trim().isEmpty() ? org.trim() : null;
             String normalizedSpace = space != null && !space.trim().isEmpty() ? space.trim() : null;
+            String normalizedResourceGroup = resourceGroup != null && !resourceGroup.trim().isEmpty() ? resourceGroup.trim() : null;
+            String normalizedCeProject = codeEngineProject != null && !codeEngineProject.trim().isEmpty() ? codeEngineProject.trim() : null;
 
             configManager.updateIbmCloudConfig(
-                new IbmCloudConfig(normalizedApiKey, normalizedRegion, normalizedOrg, normalizedSpace)
+                new IbmCloudConfig(
+                    normalizedApiKey,
+                    normalizedRegion,
+                    normalizedOrg,
+                    normalizedSpace,
+                    normalizedResourceGroup,
+                    normalizedCeProject
+                )
             );
         } catch (Exception e) {
             formatter.println("");
@@ -1217,6 +1253,12 @@ public class SettingsCommand implements Runnable {
         formatter.println(formatter.info("IBM Cloud Settings:"));
         if (ibmCloud != null && ibmCloud.isConfigured()) {
             formatter.println("   API Key: " + ibmCloud.getMaskedApiKey());
+            if (ibmCloud.getResourceGroup() != null && !ibmCloud.getResourceGroup().isBlank()) {
+                formatter.println("   Resource group: " + ibmCloud.getResourceGroup().trim());
+            }
+            if (ibmCloud.getCodeEngineProject() != null && !ibmCloud.getCodeEngineProject().isBlank()) {
+                formatter.println("   Code Engine project: " + ibmCloud.getCodeEngineProject().trim());
+            }
             if (ibmCloud.getRegion() != null && !ibmCloud.getRegion().isBlank()) {
                 formatter.println("   Region: " + ibmCloud.getRegion().trim());
             }
