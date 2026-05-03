@@ -256,9 +256,13 @@ public class SettingsCommand implements Runnable {
 
         formatter.println("");
         String input = menu.promptInput("Select option (1-" + SettingsMenuOption.values().length + ")");
+        if (input == null) {
+            formatter.println(formatter.errorMessage("Invalid input"));
+            return;
+        }
 
         try {
-            int choice = Integer.parseInt(input);
+            int choice = Integer.parseInt(input.trim());
             if (choice >= 1 && choice <= SettingsMenuOption.values().length) {
                 SettingsMenuOption selected = SettingsMenuOption.values()[choice - 1];
                 formatter.println("");
@@ -320,9 +324,13 @@ public class SettingsCommand implements Runnable {
 
         formatter.println("");
         String input = menu.promptInput("Select option (1-" + AIProviderMenuOption.values().length + ")");
+        if (input == null) {
+            formatter.println(formatter.errorMessage("Invalid input"));
+            return;
+        }
 
         try {
-            int choice = Integer.parseInt(input);
+            int choice = Integer.parseInt(input.trim());
             if (choice >= 1 && choice <= AIProviderMenuOption.values().length) {
                 AIProviderMenuOption selected = AIProviderMenuOption.values()[choice - 1];
                 formatter.println("");
@@ -368,9 +376,13 @@ public class SettingsCommand implements Runnable {
         formatter.println("");
 
         String input = menu.promptInput("Select provider (1-4)");
+        if (input == null) {
+            formatter.println(formatter.errorMessage("Invalid input"));
+            return;
+        }
 
         try {
-            int choice = Integer.parseInt(input);
+            int choice = Integer.parseInt(input.trim());
             formatter.println("");
             
             switch (choice) {

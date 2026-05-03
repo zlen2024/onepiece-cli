@@ -29,8 +29,7 @@ public class SetupCommand implements Runnable {
 
     @Option(
         names = {"--agent"},
-        description = "AI agent to configure: ${COMPLETION-CANDIDATES}",
-        defaultValue = "bob"
+        description = "AI agent to configure: ${COMPLETION-CANDIDATES}"
     )
     AgentType agent;
 
@@ -97,9 +96,13 @@ public class SetupCommand implements Runnable {
             
             formatter.println("");
             String input = menu.promptInput("Select option (1-" + AgentType.values().length + ")");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
             
             try {
-                int choice = Integer.parseInt(input);
+                int choice = Integer.parseInt(input.trim());
                 if (choice >= 1 && choice <= AgentType.values().length) {
                     agent = AgentType.values()[choice - 1];
                 } else {

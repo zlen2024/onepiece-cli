@@ -29,8 +29,7 @@ public class DeployCommand implements Runnable {
 
     @Option(
         names = {"--target"},
-        description = "Deployment target: ${COMPLETION-CANDIDATES}",
-        defaultValue = "ibmcloud"
+        description = "Deployment target: ${COMPLETION-CANDIDATES}"
     )
     DeploymentTarget target;
 
@@ -94,9 +93,13 @@ public class DeployCommand implements Runnable {
             
             formatter.println("");
             String input = menu.promptInput("Select option (1-" + DeploymentTarget.values().length + ")");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
             
             try {
-                int choice = Integer.parseInt(input);
+                int choice = Integer.parseInt(input.trim());
                 if (choice >= 1 && choice <= DeploymentTarget.values().length) {
                     target = DeploymentTarget.values()[choice - 1];
                 } else {

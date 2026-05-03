@@ -51,9 +51,12 @@ public class IbmCloudExecutor {
         command.add("login");
         command.add("--apikey");
         command.add(apiKey);
-        command.add("--region");
-        command.add(region);
-        command.add("--no-region");
+        if (region != null && !region.isBlank()) {
+            command.add("--region");
+            command.add(region);
+        } else {
+            command.add("--no-region");
+        }
 
         CommandResult result = executeCommand(command, null);
         return result.exitCode == 0;
@@ -90,9 +93,17 @@ public class IbmCloudExecutor {
         
         if ("Maven".equalsIgnoreCase(buildTool)) {
             // Check for Maven wrapper
+            Path mvnwCmd = Paths.get(projectPath, "mvnw.cmd");
             Path mvnw = Paths.get(projectPath, "mvnw");
-            if (Files.exists(mvnw)) {
-                command.add(mvnw.toString());
+            if (Files.exists(mvnwCmd)) {
+                command.add(mvnwCmd.toString());
+            } else if (Files.exists(mvnw)) {
+                if (Files.isExecutable(mvnw)) {
+                    command.add(mvnw.toString());
+                } else {
+                    command.add("bash");
+                    command.add(mvnw.toString());
+                }
             } else {
                 command.add("mvn");
             }
@@ -100,9 +111,17 @@ public class IbmCloudExecutor {
             command.add("package");
             command.add("-DskipTests");
         } else if ("Gradle".equalsIgnoreCase(buildTool)) {
+            Path gradlewBat = Paths.get(projectPath, "gradlew.bat");
             Path gradlew = Paths.get(projectPath, "gradlew");
-            if (Files.exists(gradlew)) {
-                command.add(gradlew.toString());
+            if (Files.exists(gradlewBat)) {
+                command.add(gradlewBat.toString());
+            } else if (Files.exists(gradlew)) {
+                if (Files.isExecutable(gradlew)) {
+                    command.add(gradlew.toString());
+                } else {
+                    command.add("bash");
+                    command.add(gradlew.toString());
+                }
             } else {
                 command.add("gradle");
             }
