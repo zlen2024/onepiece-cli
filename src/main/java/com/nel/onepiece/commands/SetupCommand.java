@@ -1,11 +1,21 @@
 package com.nel.onepiece.commands;
 
+import com.nel.onepiece.ai.ProjectAnalyzerService;
+import com.nel.onepiece.config.ConfigurationGenerator;
+import com.nel.onepiece.model.ProjectAnalysis;
 import com.nel.onepiece.ui.ColorFormatter;
 import com.nel.onepiece.ui.InteractiveMenu;
 import com.nel.onepiece.ui.ProgressIndicator;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 
 /**
  * Setup command - Bootstrap AI agent environment
@@ -26,6 +36,12 @@ public class SetupCommand implements Runnable {
 
     @Inject
     ProgressIndicator progress;
+
+    @Inject
+    ProjectAnalyzerService projectAnalyzerService;
+
+    @Inject
+    ConfigurationGenerator configurationGenerator;
 
     @Option(
         names = {"--agent"},
@@ -124,69 +140,83 @@ public class SetupCommand implements Runnable {
         formatter.println(formatter.info("Selected agent: " + agent.icon + " " + agent.label));
         formatter.println("");
 
-        // Step 1: Analyze project
+        Path projectPath = Paths.get(projectDir).toAbsolutePath().normalize();
+        if (!Files.exists(projectPath) || !Files.isDirectory(projectPath)) {
+            formatter.println(formatter.errorMessage("Project directory not found: " + projectPath));
+            return;
+        }
+
         progress.startSpinner("Analyzing project directory");
-        
+        ProjectAnalysis analysis;
         try {
-            Thread.sleep(2000); // Simulate analysis
+            analysis = projectAnalyzerService.analyzeProject(projectPath.toString());
             progress.success("Project structure analyzed");
-            
-            // Show detected information
-            formatter.println(formatter.info("   📁 Detected: Java Quarkus project"));
-            formatter.println(formatter.info("   📦 Found: pom.xml, src/main/java"));
-            formatter.println(formatter.info("   🎯 Recommended MCPs: filesystem, github, maven"));
-            formatter.println("");
-            
-        } catch (InterruptedException e) {
-            progress.error("Analysis interrupted");
+        } catch (Exception e) {
+            progress.error("Project analysis failed: " + e.getMessage());
             return;
         }
 
-        // Step 2: Generate configuration
-        progress.startSpinner("Generating configuration with AI (this may take 10-20 seconds)");
-        
-        try {
-            Thread.sleep(3000); // Simulate AI generation
-            progress.success("Configuration generated");
-            formatter.println("");
-            
-        } catch (InterruptedException e) {
-            progress.error("Configuration generation interrupted");
-            return;
-        }
-
-        // Step 3: Register MCPs
-        String[] mcpSteps = {
-            "filesystem-mcp (v1.2.0)",
-            "github-mcp (v2.0.1)",
-            "maven-mcp (v1.5.3)"
-        };
-
-        formatter.println(formatter.bold("Registering MCP servers..."));
-        for (int i = 0; i < mcpSteps.length; i++) {
-            progress.loading("   ├─ " + mcpSteps[i]);
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                // Ignore
-            }
-            formatter.clearLine();
-            formatter.println(formatter.successMessage("   ├─ " + mcpSteps[i]));
+        formatter.println("");
+        formatter.println(formatter.info("   📁 Project: " + projectPath));
+        formatter.println(formatter.info("   🔤 Language: " + analysis.getLanguage()));
+        formatter.println(formatter.info("   🧩 Framework: " + analysis.getFramework()));
+        formatter.println(formatter.info("   📦 Build tool: " + analysis.getBuildTool()));
+        if (analysis.getRecommendedMcps() != null && !analysis.getRecommendedMcps().isEmpty()) {
+            formatter.println(formatter.info("   🎯 Recommended MCPs: " + String.join(", ", analysis.getRecommendedMcps())));
         }
         formatter.println("");
+
+        progress.startSpinner("Generating configuration");
+        List<String> skills;
+        String systemPrompt;
+        try {
+            systemPrompt = projectAnalyzerService.generateSystemPrompt(analysis, agent.label);
+            skills = new ArrayList<>(projectAnalyzerService.recommendSkills(analysis));
+            LinkedHashSet<String> normalized = new LinkedHashSet<>(skills);
+            normalized.add("bug-hunter");
+            normalized.add("context7-auto-research");
+            skills = new ArrayList<>(normalized);
+            progress.success("Configuration generated");
+        } catch (Exception e) {
+            progress.error("Configuration generation failed: " + e.getMessage());
+            return;
+        }
+
+        boolean wroteBobConfig = false;
+        try {
+            if (agent == AgentType.BOB) {
+                configurationGenerator.generateBobWorkspace(projectPath.toString(), analysis, systemPrompt, skills);
+                wroteBobConfig = true;
+            }
+            configurationGenerator.generateMcpRegistry(projectPath.toString(), analysis);
+            configurationGenerator.generateProjectMetadata(projectPath.toString(), analysis, agent.name().toLowerCase());
+            configurationGenerator.generateEnvExample(projectPath.toString(), analysis);
+        } catch (Exception e) {
+            formatter.println("");
+            formatter.println(formatter.errorMessage("Failed to write configuration files: " + e.getMessage()));
+            return;
+        }
 
         // Step 4: Show completion
         formatter.println(formatter.success("✅ Setup Complete!"));
         formatter.println("");
         
         formatter.println(formatter.bold("📝 Generated files:"));
-        formatter.println(formatter.successMessage("   • .bob.workspace (AI agent configuration)"));
+        if (wroteBobConfig) {
+            formatter.println(formatter.successMessage("   • .bob.workspace (IBM Bob configuration)"));
+        }
         formatter.println(formatter.successMessage("   • .onepiece/mcp-registry.json (MCP server list)"));
+        formatter.println(formatter.successMessage("   • .onepiece/project.json (project metadata)"));
+        formatter.println(formatter.successMessage("   • .env.example (environment template)"));
         formatter.println("");
         
         formatter.println(formatter.bold("🚀 Next steps:"));
         formatter.println("   1. Review the generated configuration");
-        formatter.println("   2. Run your AI agent: bob start");
+        if (wroteBobConfig) {
+            formatter.println("   2. Run your AI agent: bob start");
+        } else {
+            formatter.println("   2. Run your AI agent");
+        }
         formatter.println("   3. When ready to deploy: onepiece deploy");
         formatter.println("");
 

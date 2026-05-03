@@ -3,6 +3,8 @@ package com.nel.onepiece.commands;
 import com.nel.onepiece.config.ConfigManager;
 import com.nel.onepiece.model.config.AIProviderConfig;
 import com.nel.onepiece.model.config.AIProviderType;
+import com.nel.onepiece.model.config.VaultConfig;
+import com.nel.onepiece.security.VaultClient;
 import com.nel.onepiece.ui.ColorFormatter;
 import com.nel.onepiece.ui.InteractiveMenu;
 import com.nel.onepiece.ui.ProgressIndicator;
@@ -35,6 +37,9 @@ public class SettingsCommand implements Runnable {
 
     @Inject
     ConfigManager configManager;
+
+    @Inject
+    VaultClient vaultClient;
 
     @Option(
         names = {"--vault-url"},
@@ -126,9 +131,7 @@ public class SettingsCommand implements Runnable {
     }
 
     private boolean checkVaultConfiguration() {
-        // In a real implementation, check if ~/.onepiece/config.json exists
-        // For now, simulate that it's not configured
-        return false;
+        return configManager.hasVault();
     }
 
     private void showInitialSetup() {
@@ -172,22 +175,31 @@ public class SettingsCommand implements Runnable {
 
     private void configureVault(String url, String token) {
         progress.startSpinner("Validating connection");
-        
-        try {
-            Thread.sleep(1500);
-            progress.success("Connected to Vault successfully");
-            progress.success("Token is valid");
-            formatter.println("");
-        } catch (InterruptedException e) {
-            progress.error("Connection failed");
+        String normalizedUrl = url.trim();
+        String normalizedToken = token.trim();
+
+        boolean reachable = vaultClient.testConnection(normalizedUrl, normalizedToken);
+        if (!reachable) {
+            progress.error("Vault not reachable");
             return;
         }
 
+        boolean tokenValid = vaultClient.isTokenValid(normalizedUrl, normalizedToken);
+        if (!tokenValid) {
+            progress.error("Token is not valid");
+            return;
+        }
+
+        progress.stopSpinner();
+
         progress.loading("💾 Saving configuration to ~/.onepiece/config.json");
         try {
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            // Ignore
+            configManager.updateVaultConfig(new VaultConfig(normalizedUrl, normalizedToken));
+        } catch (Exception e) {
+            formatter.println("");
+            formatter.println(formatter.errorMessage("Failed to save configuration: " + e.getMessage()));
+            formatter.println("");
+            return;
         }
         
         formatter.println("");
@@ -601,19 +613,38 @@ public class SettingsCommand implements Runnable {
     }
 
     private void testConnection() {
-        progress.startSpinner("Testing Vault connection");
-        try {
-            Thread.sleep(1500);
-            progress.success("Connection successful");
-            formatter.println("");
-            formatter.println(formatter.bold("Test Results:"));
-            formatter.println(formatter.successMessage("   ✓ Vault is reachable"));
-            formatter.println(formatter.successMessage("   ✓ Token is valid"));
-            formatter.println(formatter.successMessage("   ✓ Can read secrets"));
-            formatter.println("");
-        } catch (InterruptedException e) {
-            progress.error("Connection test failed");
+        VaultConfig config = configManager.getVaultConfig();
+        if (config == null || !config.isConfigured()) {
+            formatter.println(formatter.errorMessage("Vault is not configured. Use 'onepiece settings' to configure it."));
+            return;
         }
+
+        progress.startSpinner("Testing Vault connection");
+        boolean reachable = vaultClient.testConnection(config.getUrl(), config.getToken());
+        boolean tokenValid = vaultClient.isTokenValid(config.getUrl(), config.getToken());
+        if (!reachable) {
+            progress.error("Vault not reachable");
+            return;
+        }
+        if (!tokenValid) {
+            progress.error("Token is not valid");
+            return;
+        }
+
+        progress.success("Connection successful");
+        formatter.println("");
+        formatter.println(formatter.bold("Test Results:"));
+        formatter.println(formatter.successMessage("   ✓ Vault is reachable"));
+        formatter.println(formatter.successMessage("   ✓ Token is valid"));
+        formatter.println("");
+
+        try {
+            vaultClient.listSecrets(config.getUrl(), config.getToken(), "secret");
+            formatter.println(formatter.successMessage("   ✓ Can list secrets"));
+        } catch (Exception e) {
+            formatter.println(formatter.warningMessage("   Limited permissions to list secrets"));
+        }
+        formatter.println("");
     }
 
     private void showConfiguration() {
@@ -654,9 +685,12 @@ public class SettingsCommand implements Runnable {
         formatter.println("");
         progress.loading("Resetting configuration...");
         try {
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            // Ignore
+            configManager.resetConfig();
+        } catch (Exception e) {
+            formatter.println("");
+            formatter.println(formatter.errorMessage("Failed to reset configuration: " + e.getMessage()));
+            formatter.println("");
+            return;
         }
         
         formatter.println("");
