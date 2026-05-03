@@ -9,8 +9,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Objects;
 
 /**
  * Service for managing AI provider configuration and creating chat models dynamically
@@ -89,9 +88,9 @@ public class AIProviderService {
         }
         
         return config1.getType() == config2.getType()
-            && config1.getApiKey().equals(config2.getApiKey())
-            && config1.getModelName().equals(config2.getModelName())
-            && config1.getBaseUrl().equals(config2.getBaseUrl());
+            && Objects.equals(config1.getApiKey(), config2.getApiKey())
+            && Objects.equals(config1.getModelName(), config2.getModelName())
+            && Objects.equals(config1.getBaseUrl(), config2.getBaseUrl());
     }
 
     /**

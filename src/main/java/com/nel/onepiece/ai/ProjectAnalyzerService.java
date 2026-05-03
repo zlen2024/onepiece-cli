@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -44,7 +45,8 @@ public class ProjectAnalyzerService {
             String projectStructure = scanProjectDirectory(projectPath);
             
             // Use AI to analyze the structure
-            return analyzerAI.analyzeProject(projectStructure);
+            ProjectAnalysis analysis = analyzerAI.analyzeProject(projectStructure);
+            return normalizeAnalysis(analysis);
             
         } catch (Exception e) {
             System.err.println("Warning: AI analysis failed: " + e.getMessage());
@@ -52,6 +54,23 @@ public class ProjectAnalyzerService {
             // Fallback to manual detection if AI fails
             return fallbackAnalysis(projectPath);
         }
+    }
+
+    private ProjectAnalysis normalizeAnalysis(ProjectAnalysis analysis) {
+        if (analysis == null) {
+            return fallbackAnalysis(".");
+        }
+        List<String> mcps = analysis.getRecommendedMcps();
+        if (mcps == null) {
+            mcps = Collections.emptyList();
+        }
+        if (!mcps.contains("filesystem-mcp")) {
+            List<String> updated = new ArrayList<>(mcps);
+            updated.add(0, "filesystem-mcp");
+            mcps = updated;
+        }
+        analysis.setRecommendedMcps(mcps);
+        return analysis;
     }
 
     /**

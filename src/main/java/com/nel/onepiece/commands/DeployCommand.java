@@ -1,11 +1,21 @@
 package com.nel.onepiece.commands;
 
+import com.nel.onepiece.ai.ProjectAnalyzerService;
+import com.nel.onepiece.config.ConfigManager;
+import com.nel.onepiece.deployment.IbmCloudExecutor;
+import com.nel.onepiece.model.ProjectAnalysis;
+import com.nel.onepiece.model.config.VaultConfig;
+import com.nel.onepiece.security.VaultClient;
 import com.nel.onepiece.ui.ColorFormatter;
 import com.nel.onepiece.ui.InteractiveMenu;
 import com.nel.onepiece.ui.ProgressIndicator;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 /**
  * Deploy command - Automate cloud deployment
@@ -27,10 +37,21 @@ public class DeployCommand implements Runnable {
     @Inject
     ProgressIndicator progress;
 
+    @Inject
+    ConfigManager configManager;
+
+    @Inject
+    VaultClient vaultClient;
+
+    @Inject
+    IbmCloudExecutor ibmCloudExecutor;
+
+    @Inject
+    ProjectAnalyzerService projectAnalyzerService;
+
     @Option(
         names = {"--target"},
-        description = "Deployment target: ${COMPLETION-CANDIDATES}",
-        defaultValue = "ibmcloud"
+        description = "Deployment target: ${COMPLETION-CANDIDATES}"
     )
     DeploymentTarget target;
 
@@ -46,6 +67,13 @@ public class DeployCommand implements Runnable {
         description = "Application name"
     )
     String appName;
+
+    @Option(
+        names = {"--project-dir"},
+        description = "Project directory to deploy (default: current directory)",
+        defaultValue = "."
+    )
+    String projectDir;
 
     @Option(
         names = {"--no-interactive"},
@@ -94,9 +122,13 @@ public class DeployCommand implements Runnable {
             
             formatter.println("");
             String input = menu.promptInput("Select option (1-" + DeploymentTarget.values().length + ")");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
             
             try {
-                int choice = Integer.parseInt(input);
+                int choice = Integer.parseInt(input.trim());
                 if (choice >= 1 && choice <= DeploymentTarget.values().length) {
                     target = DeploymentTarget.values()[choice - 1];
                 } else {
@@ -118,6 +150,20 @@ public class DeployCommand implements Runnable {
         formatter.println(formatter.info("Selected target: " + target.icon + " " + target.label));
         formatter.println("");
 
+        String effectiveProjectDir = projectDir;
+        if (effectiveProjectDir == null || effectiveProjectDir.isBlank()) {
+            effectiveProjectDir = ".";
+        }
+        if (region == null || region.isBlank()) {
+            region = "us-south";
+        }
+
+        Path projectPath = Paths.get(effectiveProjectDir).toAbsolutePath().normalize();
+        if (!Files.exists(projectPath) || !Files.isDirectory(projectPath)) {
+            formatter.println(formatter.errorMessage("Project directory not found: " + projectPath));
+            return;
+        }
+
         // Get app name if not provided
         if (appName == null && !nonInteractive) {
             appName = menu.promptInput("Enter your app name");
@@ -133,92 +179,156 @@ public class DeployCommand implements Runnable {
 
         formatter.println(formatter.info("App name: " + appName));
         formatter.println(formatter.info("Region: " + region));
+        formatter.println(formatter.info("Project: " + projectPath));
         formatter.println("");
 
-        // Step 1: Fetch credentials
-        progress.startSpinner("Fetching credentials from Vault");
-        try {
-            Thread.sleep(1500);
-            progress.success("Credentials retrieved");
-            formatter.println(formatter.info("   Vault URL: https://vault.example.com"));
-            formatter.println(formatter.successMessage("   " + target.label + " API Key retrieved"));
-            formatter.println("");
-        } catch (InterruptedException e) {
-            progress.error("Failed to fetch credentials");
+        if (target != DeploymentTarget.IBMCLOUD) {
+            formatter.println(formatter.warningMessage("Only IBM Cloud deployment is implemented for this POC."));
             return;
         }
 
-        // Step 2: Build application
-        formatter.println(formatter.bold("📦 Building application..."));
-        progress.startSpinner("Running: mvn clean package -DskipTests");
-        try {
-            Thread.sleep(3000);
-            progress.success("Build successful (23.4s)");
-            formatter.println("");
-        } catch (InterruptedException e) {
-            progress.error("Build failed");
+        if (!ibmCloudExecutor.isCliInstalled()) {
+            formatter.println(formatter.errorMessage("IBM Cloud CLI not found. Install it first to use deploy."));
+            formatter.println(formatter.muted("https://cloud.ibm.com/docs/cli"));
             return;
         }
 
-        // Step 3: Deploy to cloud
-        formatter.println(formatter.bold("☁️  Deploying to " + target.label + "..."));
-        
-        String[] deploySteps = {
-            "Authenticating with " + target.label,
-            "Pushing application (" + appName + ")",
-            "Starting application"
-        };
+        String apiKey = null;
+        String finalRegion = region;
+        String org = null;
+        String space = null;
 
-        for (String step : deploySteps) {
-            progress.startSpinner(step);
+        if (configManager.hasVault()) {
+            VaultConfig vaultConfig = configManager.getVaultConfig();
+            progress.startSpinner("Fetching IBM Cloud credentials from Vault");
             try {
-                Thread.sleep(2000);
-                progress.success(step);
-            } catch (InterruptedException e) {
-                progress.error(step + " failed");
+                VaultClient.IbmCloudCredentials creds = vaultClient.getIbmCloudCredentials(vaultConfig.getUrl(), vaultConfig.getToken());
+                apiKey = creds.apiKey();
+                if (creds.region() != null && !creds.region().isBlank()) {
+                    finalRegion = creds.region();
+                }
+                org = creds.org();
+                space = creds.space();
+                progress.success("Credentials retrieved");
+            } catch (Exception e) {
+                progress.error("Failed to fetch credentials from Vault");
+                formatter.println(formatter.muted(e.getMessage()));
+                return;
+            }
+            formatter.println("");
+        } else {
+            apiKey = System.getenv("IBM_CLOUD_API_KEY");
+            String envRegion = System.getenv("IBM_CLOUD_REGION");
+            if (envRegion != null && !envRegion.isBlank()) {
+                finalRegion = envRegion;
+            }
+        }
+
+        if (apiKey == null || apiKey.isBlank()) {
+            formatter.println(formatter.errorMessage("IBM Cloud API key not found. Configure Vault or set IBM_CLOUD_API_KEY."));
+            return;
+        }
+
+        progress.startSpinner("Logging in to IBM Cloud");
+        try {
+            boolean loggedIn = ibmCloudExecutor.login(apiKey, finalRegion);
+            if (!loggedIn) {
+                progress.error("IBM Cloud login failed");
+                return;
+            }
+            progress.success("Logged in");
+        } catch (Exception e) {
+            progress.error("IBM Cloud login failed");
+            formatter.println(formatter.muted(e.getMessage()));
+            return;
+        }
+
+        if ((org != null && !org.isBlank()) || (space != null && !space.isBlank())) {
+            progress.startSpinner("Targeting Cloud Foundry org/space");
+            try {
+                boolean targeted = ibmCloudExecutor.targetCf(org, space);
+                if (!targeted) {
+                    progress.error("Targeting Cloud Foundry failed");
+                    return;
+                }
+                progress.success("Cloud Foundry target set");
+            } catch (Exception e) {
+                progress.error("Targeting Cloud Foundry failed");
+                formatter.println(formatter.muted(e.getMessage()));
                 return;
             }
         }
 
-        formatter.println("");
-        formatter.println(formatter.bold("Deployment Logs:"));
-        formatter.println(formatter.separator());
-        
-        // Simulate deployment logs
-        String[] logs = {
-            "[2026-05-02 17:15:00] Creating app...",
-            "[2026-05-02 17:15:05] Uploading files...",
-            "[2026-05-02 17:15:30] Starting instances...",
-            "[2026-05-02 17:15:45] App started successfully"
-        };
-        
-        for (String log : logs) {
-            formatter.println(formatter.info(log));
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                // Ignore
-            }
+        ProjectAnalysis analysis;
+        progress.startSpinner("Detecting project build settings");
+        try {
+            analysis = projectAnalyzerService.analyzeProject(projectPath.toString());
+            progress.success("Project detected: " + analysis.getFramework());
+        } catch (Exception e) {
+            progress.error("Project detection failed");
+            formatter.println(formatter.muted(e.getMessage()));
+            return;
         }
-        
-        formatter.println(formatter.separator());
-        formatter.println("");
+
+        String buildTool = analysis.getBuildTool() != null ? analysis.getBuildTool() : "Maven";
+        String buildpack = ibmCloudExecutor.detectBuildpack(analysis.getFramework() != null ? analysis.getFramework() : "java");
+        try {
+            ibmCloudExecutor.generateManifest(projectPath.toString(), appName, buildpack, 512, 1);
+        } catch (Exception e) {
+            formatter.println(formatter.warningMessage("Failed to generate manifest.yml"));
+        }
+
+        progress.startSpinner("Building application (" + buildTool + ")");
+        try {
+            boolean built = ibmCloudExecutor.buildApplication(projectPath.toString(), buildTool);
+            if (!built) {
+                progress.error("Build failed");
+                return;
+            }
+            progress.success("Build successful");
+        } catch (Exception e) {
+            progress.error("Build failed");
+            formatter.println(formatter.muted(e.getMessage()));
+            return;
+        }
+
+        progress.startSpinner("Deploying to IBM Cloud (Cloud Foundry)");
+        try {
+            boolean pushed = ibmCloudExecutor.pushApplication(appName, projectPath.toString());
+            if (!pushed) {
+                progress.error("Deploy failed");
+                return;
+            }
+            progress.success("Deploy complete");
+        } catch (Exception e) {
+            progress.error("Deploy failed");
+            formatter.println(formatter.muted(e.getMessage()));
+            return;
+        }
+
+        String status;
+        try {
+            status = ibmCloudExecutor.getAppStatus(appName);
+        } catch (Exception e) {
+            status = null;
+        }
 
         // Step 4: Show completion
         formatter.println(formatter.success("✅ Deployment Complete!"));
         formatter.println("");
         
-        String appUrl = String.format("https://%s.%s.cf.appdomain.cloud", appName, region);
+        String appUrl = String.format("https://%s.%s.cf.appdomain.cloud", appName, finalRegion);
         formatter.println(formatter.bold("🌐 Your app is live at:"));
         formatter.println(formatter.highlight("   " + appUrl));
         formatter.println("");
         
-        formatter.println(formatter.bold("📊 App Details:"));
-        formatter.println(formatter.info("   • Status: Running"));
-        formatter.println(formatter.info("   • Instances: 1"));
-        formatter.println(formatter.info("   • Memory: 512MB"));
-        formatter.println(formatter.info("   • Disk: 1GB"));
-        formatter.println("");
+        if (status != null && !status.isBlank()) {
+            formatter.println(formatter.bold("📊 ibmcloud cf app output:"));
+            formatter.println(formatter.separator());
+            formatter.println(status.trim());
+            formatter.println(formatter.separator());
+            formatter.println("");
+        }
     }
 }
 

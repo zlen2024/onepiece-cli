@@ -49,6 +49,21 @@ public class VaultClient {
         }
     }
 
+    public boolean isTokenValid(String vaultUrl, String token) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(vaultUrl + "/v1/auth/token/lookup-self"))
+                .header("X-Vault-Token", token)
+                .GET()
+                .timeout(Duration.ofSeconds(10))
+                .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() == 200;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /**
      * Read a secret from Vault
      */

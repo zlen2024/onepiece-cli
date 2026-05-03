@@ -10,7 +10,9 @@ import org.jline.reader.LineReaderBuilder;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 
 /**
  * Interactive menu system using JLine for terminal interaction.
@@ -33,6 +35,7 @@ public class InteractiveMenu {
 
     private Terminal terminal;
     private LineReader reader;
+    private BufferedReader fallbackReader;
 
     private enum MainMenuOption {
         SETUP("⚙️", "Setup", "Bootstrap AI agent environment"),
@@ -66,8 +69,19 @@ public class InteractiveMenu {
             }
         } catch (IOException e) {
             System.err.println("Failed to initialize terminal: " + e.getMessage());
-            // Fallback to simple mode
+            fallbackReader = new BufferedReader(new InputStreamReader(System.in));
         }
+    }
+
+    private String readLine(String prompt) throws IOException {
+        if (reader != null) {
+            return reader.readLine(prompt);
+        }
+        if (fallbackReader == null) {
+            fallbackReader = new BufferedReader(new InputStreamReader(System.in));
+        }
+        formatter.print(prompt);
+        return fallbackReader.readLine();
     }
 
     /**
@@ -132,7 +146,7 @@ public class InteractiveMenu {
         formatter.println("");
         
         try {
-            String input = reader.readLine(formatter.highlight("Select option (1-4): "));
+            String input = readLine(formatter.highlight("Select option (1-4): "));
             int choice = Integer.parseInt(input.trim());
             
             if (choice >= 1 && choice <= MainMenuOption.values().length) {
@@ -159,7 +173,8 @@ public class InteractiveMenu {
 
         for (int i = 0; i < options.length; i++) {
             T option = options[i];
-            String line = String.format("  %s  %s", 
+            String line = String.format("  %d. %s  %s", 
+                i + 1,
                 iconGetter.apply(option), 
                 labelGetter.apply(option));
             formatter.println(line);
@@ -168,7 +183,7 @@ public class InteractiveMenu {
         formatter.println("");
         
         try {
-            String input = reader.readLine(formatter.highlight("Select option (1-" + options.length + "): "));
+            String input = readLine(formatter.highlight("Select option (1-" + options.length + "): "));
             int choice = Integer.parseInt(input.trim());
             
             if (choice >= 1 && choice <= options.length) {
@@ -191,7 +206,7 @@ public class InteractiveMenu {
      */
     public String promptInput(String prompt) {
         try {
-            return reader.readLine(formatter.highlight("? " + prompt + ": "));
+            return readLine(formatter.highlight("? " + prompt + ": "));
         } catch (Exception e) {
             formatter.println(formatter.errorMessage("Error reading input: " + e.getMessage()));
             return null;
@@ -204,7 +219,7 @@ public class InteractiveMenu {
     public boolean promptConfirm(String prompt, boolean defaultValue) {
         try {
             String defaultText = defaultValue ? "Y/n" : "y/N";
-            String input = reader.readLine(formatter.highlight("? " + prompt + " (" + defaultText + "): "));
+            String input = readLine(formatter.highlight("? " + prompt + " (" + defaultText + "): "));
             
             if (input == null || input.trim().isEmpty()) {
                 return defaultValue;
@@ -222,7 +237,7 @@ public class InteractiveMenu {
      */
     private void pressEnterToContinue() {
         try {
-            reader.readLine(formatter.muted("Press Enter to continue..."));
+            readLine(formatter.muted("Press Enter to continue..."));
         } catch (Exception e) {
             // Ignore
         }
