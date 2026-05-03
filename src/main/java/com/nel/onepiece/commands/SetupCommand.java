@@ -143,7 +143,12 @@ public class SetupCommand implements Runnable {
         formatter.println(formatter.info("Selected agent: " + agent.icon + " " + agent.label));
         formatter.println("");
 
-        Path projectPath = Paths.get(projectDir).toAbsolutePath().normalize();
+        String effectiveProjectDir = projectDir;
+        if (effectiveProjectDir == null || effectiveProjectDir.isBlank()) {
+            effectiveProjectDir = ".";
+        }
+
+        Path projectPath = Paths.get(effectiveProjectDir).toAbsolutePath().normalize();
         if (!Files.exists(projectPath) || !Files.isDirectory(projectPath)) {
             formatter.println(formatter.errorMessage("Project directory not found: " + projectPath));
             return;

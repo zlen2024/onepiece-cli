@@ -150,7 +150,15 @@ public class DeployCommand implements Runnable {
         formatter.println(formatter.info("Selected target: " + target.icon + " " + target.label));
         formatter.println("");
 
-        Path projectPath = Paths.get(projectDir).toAbsolutePath().normalize();
+        String effectiveProjectDir = projectDir;
+        if (effectiveProjectDir == null || effectiveProjectDir.isBlank()) {
+            effectiveProjectDir = ".";
+        }
+        if (region == null || region.isBlank()) {
+            region = "us-south";
+        }
+
+        Path projectPath = Paths.get(effectiveProjectDir).toAbsolutePath().normalize();
         if (!Files.exists(projectPath) || !Files.isDirectory(projectPath)) {
             formatter.println(formatter.errorMessage("Project directory not found: " + projectPath));
             return;
