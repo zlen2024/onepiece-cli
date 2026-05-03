@@ -734,7 +734,12 @@ public class SetupCommand implements Runnable {
             String baseId = slugify(displayName);
             String id = baseId;
             int suffix = 2;
-            while (library.getAgents().stream().anyMatch(a -> a != null && id.equals(a.getId()))) {
+            while (true) {
+                final String candidate = id;
+                boolean exists = library.getAgents().stream().anyMatch(a -> a != null && candidate.equals(a.getId()));
+                if (!exists) {
+                    break;
+                }
                 id = baseId + "-" + suffix;
                 suffix++;
             }
