@@ -1,0 +1,25 @@
+{
+  "mcpServers" : {
+    "filesystem-mcp" : {
+      "disabled" : false,
+      "cwd" : "C:\\dev\\onepiece-cli",
+      "command" : "npx",
+      "args" : [ "-y", "@modelcontextprotocol/server-filesystem", "C:\\dev\\onepiece-cli" ]
+    },
+    "github-mcp" : {
+      "disabled" : false,
+      "cwd" : "C:\\dev\\onepiece-cli",
+      "command" : "npx",
+      "args" : [ "-y", "@modelcontextprotocol/server-github" ],
+      "env" : {
+        "GITHUB_PERSONAL_ACCESS_TOKEN" : "${GITHUB_TOKEN}"
+      }
+    },
+    "maven-mcp" : {
+      "disabled" : false,
+      "cwd" : "C:\\dev\\onepiece-cli",
+      "command" : "npx",
+      "args" : [ "-y", "@modelcontextprotocol/server-maven", "C:\\dev\\onepiece-cli" ]
+    }
+  }
+}

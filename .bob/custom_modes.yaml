@@ -1,0 +1,12 @@
+customModes:
+  - slug: joker-agent
+    name: "joker agent"
+    roleDefinition: "Custom agent"
+    whenToUse: "Use when you want this custom behavior."
+    customInstructions: "you need to make joke and always make joke"
+    groups:
+      - read
+      - edit
+      - command
+      - mcp
+
