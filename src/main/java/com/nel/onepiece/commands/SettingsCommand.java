@@ -122,7 +122,7 @@ public class SettingsCommand implements Runnable {
 
     private enum SettingsMenuOption {
         AI_PROVIDER("🤖", "AI Provider Configuration"),
-        IBM_CLOUD("☁️", "IBM Cloud Deployment Credentials"),
+        DEPLOYMENT_CONFIG("☁️", "Deployment Config"),
         PRESETS("📚", "Presets Library"),
         UPDATE("🔄", "Update Vault configuration"),
         TEST("🧪", "Test connection"),
@@ -149,6 +149,20 @@ public class SettingsCommand implements Runnable {
         final String label;
 
         AIProviderMenuOption(String icon, String label) {
+            this.icon = icon;
+            this.label = label;
+        }
+    }
+
+    private enum DeploymentConfigMenuOption {
+        IBM_CLOUD("☁️", "IBM Cloud (Code Engine)"),
+        FLYIO("🪰", "Fly.io (Coming soon)"),
+        BACK("🔙", "Back");
+
+        final String icon;
+        final String label;
+
+        DeploymentConfigMenuOption(String icon, String label) {
             this.icon = icon;
             this.label = label;
         }
@@ -280,10 +294,11 @@ public class SettingsCommand implements Runnable {
             String regionInfo = ibmCloud.getRegion() != null && !ibmCloud.getRegion().isBlank()
                 ? " (" + ibmCloud.getRegion().trim() + ")"
                 : "";
-            formatter.println(formatter.info("   IBM Cloud: Configured" + regionInfo));
+            formatter.println(formatter.info("   Deployment (IBM Cloud): Configured" + regionInfo));
         } else {
-            formatter.println(formatter.muted("   IBM Cloud: Not configured"));
+            formatter.println(formatter.muted("   Deployment (IBM Cloud): Not configured"));
         }
+        formatter.println(formatter.muted("   Deployment (Fly.io): Not configured"));
         formatter.println("");
 
         if (nonInteractive) {
@@ -322,8 +337,8 @@ public class SettingsCommand implements Runnable {
             case AI_PROVIDER:
                 showAIProviderMenu();
                 break;
-            case IBM_CLOUD:
-                showIbmCloudMenu();
+            case DEPLOYMENT_CONFIG:
+                showDeploymentConfigMenu();
                 break;
             case PRESETS:
                 showPresetsLibraryMenu();
@@ -1190,6 +1205,50 @@ public class SettingsCommand implements Runnable {
         String space = menu.promptInput("Default Cloud Foundry space (press Enter to skip)");
 
         configureIbmCloud(apiKey, region, org, space, resourceGroup, ceProject);
+    }
+
+    private void showDeploymentConfigMenu() {
+        while (true) {
+            formatter.println(formatter.section("☁️ Deployment Config"));
+            formatter.println("");
+
+            for (int i = 0; i < DeploymentConfigMenuOption.values().length; i++) {
+                DeploymentConfigMenuOption opt = DeploymentConfigMenuOption.values()[i];
+                formatter.println(String.format("  %d. %s %s", i + 1, opt.icon, opt.label));
+            }
+
+            formatter.println("");
+            String input = menu.promptInput("Select option (1-" + DeploymentConfigMenuOption.values().length + ")");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
+
+            int choice;
+            try {
+                choice = Integer.parseInt(input.trim());
+            } catch (NumberFormatException e) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                continue;
+            }
+
+            if (choice < 1 || choice > DeploymentConfigMenuOption.values().length) {
+                formatter.println(formatter.errorMessage("Invalid selection"));
+                continue;
+            }
+
+            DeploymentConfigMenuOption selected = DeploymentConfigMenuOption.values()[choice - 1];
+            formatter.println("");
+            switch (selected) {
+                case IBM_CLOUD -> showIbmCloudMenu();
+                case FLYIO -> formatter.println(formatter.warningMessage("Fly.io deployment config is not implemented yet."));
+                case BACK -> {
+                    return;
+                }
+            }
+
+            formatter.println("");
+        }
     }
 
     private void configureIbmCloud(String apiKey, String region, String org, String space, String resourceGroup, String codeEngineProject) {

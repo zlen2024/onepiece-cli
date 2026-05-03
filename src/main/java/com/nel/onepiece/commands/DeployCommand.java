@@ -175,8 +175,54 @@ public class DeployCommand implements Runnable {
 
         IbmCloudConfig ibmCloudConfig = configManager.getIbmCloudConfig();
         if (ibmCloudConfig == null || !ibmCloudConfig.isConfigured()) {
-            formatter.println(formatter.errorMessage("IBM Cloud credentials not configured. Run 'onepiece settings' to set IBM Cloud API key."));
-            return;
+            if (nonInteractive) {
+                formatter.println(formatter.errorMessage("IBM Cloud credentials not configured. Run 'onepiece settings' to set IBM Cloud API key."));
+                return;
+            }
+
+            formatter.println(formatter.warningMessage("IBM Cloud credentials not configured."));
+            boolean configureNow = menu.promptConfirm("Configure deployment credentials now?", true);
+            formatter.println("");
+            if (!configureNow) {
+                formatter.println(formatter.muted("Run 'onepiece settings' later to configure deployment credentials."));
+                return;
+            }
+
+            String apiKeyInput = menu.promptInput("Enter your IBM Cloud API key");
+            if (apiKeyInput == null || apiKeyInput.trim().isEmpty()) {
+                formatter.println(formatter.errorMessage("IBM Cloud API key is required"));
+                return;
+            }
+
+            String rgInput = menu.promptInput("Default resource group (default: Default)");
+            if (rgInput != null && rgInput.trim().isEmpty()) {
+                rgInput = null;
+            }
+            String ceProjectInput = menu.promptInput("Code Engine project name (default: onepiece)");
+            if (ceProjectInput != null && ceProjectInput.trim().isEmpty()) {
+                ceProjectInput = null;
+            }
+            String regionInput = menu.promptInput("Default region (default: us-south)");
+            if (regionInput != null && regionInput.trim().isEmpty()) {
+                regionInput = null;
+            }
+
+            String normalizedRg = (rgInput == null || rgInput.isBlank()) ? "Default" : rgInput.trim();
+            String normalizedCeProject = (ceProjectInput == null || ceProjectInput.isBlank()) ? "onepiece" : ceProjectInput.trim();
+            String normalizedRegion = (regionInput == null || regionInput.isBlank()) ? "us-south" : regionInput.trim();
+
+            progress.loading("💾 Saving configuration to ~/.onepiece/config.json");
+            try {
+                configManager.updateIbmCloudConfig(new IbmCloudConfig(apiKeyInput.trim(), normalizedRegion, null, null, normalizedRg, normalizedCeProject));
+                ibmCloudConfig = configManager.getIbmCloudConfig();
+            } catch (Exception e) {
+                formatter.println("");
+                formatter.println(formatter.errorMessage("Failed to save configuration: " + e.getMessage()));
+                formatter.println("");
+                return;
+            }
+
+            formatter.println("");
         }
 
         String apiKey = ibmCloudConfig.getApiKey();

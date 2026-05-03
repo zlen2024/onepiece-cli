@@ -1,6 +1,7 @@
 package com.nel.onepiece.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.nel.onepiece.model.config.AIProviderConfig;
 import com.nel.onepiece.model.config.IbmCloudConfig;
@@ -30,6 +31,7 @@ public class ConfigManager {
     public ConfigManager() {
         this.objectMapper = new ObjectMapper();
         this.objectMapper.enable(SerializationFeature.INDENT_OUTPUT);
+        this.objectMapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         
         // Get user home directory
         String userHome = System.getProperty("user.home");
