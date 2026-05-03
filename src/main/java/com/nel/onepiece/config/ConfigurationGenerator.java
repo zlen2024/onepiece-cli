@@ -28,7 +28,7 @@ public class ConfigurationGenerator {
     /**
      * Generate .bob.workspace configuration file
      */
-    public void generateBobWorkspace(String projectPath, ProjectAnalysis analysis, String systemPrompt, List<String> skills) throws IOException {
+    public void generateBobWorkspace(String projectPath, ProjectAnalysis analysis, String systemPrompt, List<String> skills, String modelName, double temperature, int maxTokens) throws IOException {
         BobWorkspaceConfig config = new BobWorkspaceConfig();
         
         // Workspace info
@@ -48,9 +48,9 @@ public class ConfigurationGenerator {
         // Agent configuration
         BobWorkspaceConfig.AgentConfig agent = new BobWorkspaceConfig.AgentConfig();
         agent.setName("IBM Bob");
-        agent.setModel("gpt-4");
-        agent.setTemperature(0.7);
-        agent.setMaxTokens(2000);
+        agent.setModel(modelName);
+        agent.setTemperature(temperature);
+        agent.setMaxTokens(maxTokens);
         agent.setSystemPrompt(systemPrompt);
         config.setAgent(agent);
         
@@ -322,20 +322,20 @@ public class ConfigurationGenerator {
         String yaml = """
 customModes:
   - slug: poc-architect
-    name: 🧭 PoC Architect
-    roleDefinition: You are a pragmatic software architect. Focus on proof-of-concept delivery, clear decisions, and minimal risk.
-    whenToUse: Use for architecture decisions, repo analysis, and planning execution steps.
-    customInstructions: Follow the project workflow: %s. Prefer safe, incremental changes and verify each step.
+    name: "🧭 PoC Architect"
+    roleDefinition: "You are a pragmatic software architect. Focus on proof-of-concept delivery, clear decisions, and minimal risk."
+    whenToUse: "Use for architecture decisions, repo analysis, and planning execution steps."
+    customInstructions: "Follow the project workflow: %s. Prefer safe, incremental changes and verify each step."
     groups:
       - read
       - browser
       - mcp
 
   - slug: deploy-engineer
-    name: ☁️ Deploy Engineer
-    roleDefinition: You are a DevOps engineer specialized in IBM Cloud deployments and CLI automation.
-    whenToUse: Use for deployment, CI/CD, and troubleshooting IBM Cloud issues.
-    customInstructions: Follow the project workflow: %s. Do not print or persist secrets. Prefer reproducible commands.
+    name: "☁️ Deploy Engineer"
+    roleDefinition: "You are a DevOps engineer specialized in IBM Cloud deployments and CLI automation."
+    whenToUse: "Use for deployment, CI/CD, and troubleshooting IBM Cloud issues."
+    customInstructions: "Follow the project workflow: %s. Do not print or persist secrets. Prefer reproducible commands."
     groups:
       - read
       - edit
@@ -343,15 +343,14 @@ customModes:
       - mcp
 
   - slug: docs-writer
-    name: 📝 Documentation Writer
-    roleDefinition: You are a technical writer specializing in concise, accurate documentation.
-    whenToUse: Use for writing README, setup guides, and runbooks.
-    customInstructions: Write clear steps and expected outcomes. Keep docs consistent with the PoC scope.
+    name: "📝 Documentation Writer"
+    roleDefinition: "You are a technical writer specializing in concise, accurate documentation."
+    whenToUse: "Use for writing README, setup guides, and runbooks."
+    customInstructions: "Write clear steps and expected outcomes. Keep docs consistent with the PoC scope."
     groups:
       - read
-      - - edit
-        fileRegex: \\.(md|mdx)$
-        description: Markdown files only
+      - edit
+      - mcp
 """.formatted(workflow, workflow);
 
         Files.writeString(bobDir.resolve("custom_modes.yaml"), yaml);

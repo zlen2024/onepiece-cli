@@ -1,6 +1,7 @@
 package com.nel.onepiece.commands;
 
 import com.nel.onepiece.ai.ProjectAnalyzerService;
+import com.nel.onepiece.ai.AIProviderService;
 import com.nel.onepiece.config.ConfigurationGenerator;
 import com.nel.onepiece.model.ProjectAnalysis;
 import com.nel.onepiece.ui.ColorFormatter;
@@ -42,6 +43,9 @@ public class SetupCommand implements Runnable {
 
     @Inject
     ProjectAnalyzerService projectAnalyzerService;
+
+    @Inject
+    AIProviderService aiProviderService;
 
     @Inject
     ConfigurationGenerator configurationGenerator;
@@ -174,8 +178,21 @@ public class SetupCommand implements Runnable {
         }
         formatter.println("");
 
-        String workflow = "agile";
+        boolean advanced = false;
         if (!nonInteractive) {
+            boolean useRecommended = menu.promptConfirm("Use recommended settings (fast setup)?", true);
+            advanced = !useRecommended;
+            formatter.println("");
+        }
+
+        if (!aiProviderService.isConfigured()) {
+            formatter.println(formatter.warning("⚠️  AI provider is not configured. Setup will use fallback defaults."));
+            formatter.println(formatter.muted("Run: onepiece settings"));
+            formatter.println("");
+        }
+
+        String workflow = "agile";
+        if (!nonInteractive && advanced) {
             formatter.println(formatter.bold("? Select project workflow:"));
             formatter.println("");
             formatter.println("  1. Agile");
@@ -211,13 +228,20 @@ public class SetupCommand implements Runnable {
             normalized.add("context7-auto-research");
             skills = new ArrayList<>(normalized);
             progress.success("Configuration generated");
-        } catch (Exception e) {
-            progress.error("Configuration generation failed: " + e.getMessage());
-            return;
+        } catch (Throwable t) {
+            progress.success("Configuration generated");
+            formatter.println(formatter.warning("⚠️  AI generation failed; using fallback defaults."));
+            formatter.println(formatter.muted(t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName()));
+            systemPrompt = String.format(
+                "You are %s, an AI coding assistant working on a %s project.",
+                agent.label,
+                analysis.getFramework()
+            );
+            skills = List.of("bug-hunter", "context7-auto-research");
         }
 
         List<String> selectedSkills = skills;
-        if (!nonInteractive) {
+        if (!nonInteractive && advanced) {
             formatter.println("");
             formatter.println(formatter.bold("? Skills selection:"));
             formatter.println(formatter.muted("Recommended: " + String.join(", ", skills)));
@@ -244,7 +268,7 @@ public class SetupCommand implements Runnable {
         List<String> selectedMcps = analysis.getRecommendedMcps() != null ? new ArrayList<>(analysis.getRecommendedMcps()) : List.of("filesystem-mcp");
         Map<String, String> envVarNames = new HashMap<>();
         Map<String, Map<String, Object>> bobMcpServers = new LinkedHashMap<>();
-        if (!nonInteractive) {
+        if (!nonInteractive && advanced) {
             formatter.println(formatter.bold("? MCP selection:"));
             formatter.println(formatter.muted("Recommended: " + String.join(", ", selectedMcps)));
             boolean useRecommended = menu.promptConfirm("Use recommended MCP servers?", true);
@@ -284,7 +308,7 @@ public class SetupCommand implements Runnable {
             Map<String, Object> server = new LinkedHashMap<>();
             server.put("disabled", false);
 
-            if (!nonInteractive) {
+            if (!nonInteractive && advanced) {
                 formatter.println(formatter.bold("? Transport for " + mcp + ":"));
                 formatter.println("  1. STDIO (local)");
                 formatter.println("  2. Remote (HTTP)");
@@ -388,11 +412,34 @@ public class SetupCommand implements Runnable {
                     case "github-mcp" -> {
                         server.put("command", "npx");
                         server.put("args", List.of("-y", "@modelcontextprotocol/server-github"));
-                        server.put("env", Map.of("GITHUB_PERSONAL_ACCESS_TOKEN", "${GITHUB_TOKEN}"));
+                        server.put("env", Map.of(
+                            "GITHUB_PERSONAL_ACCESS_TOKEN",
+                            "${" + envVarNames.getOrDefault("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN") + "}"
+                        ));
                     }
                     case "maven-mcp" -> {
                         server.put("command", "npx");
                         server.put("args", List.of("-y", "@modelcontextprotocol/server-maven", projectPath.toString()));
+                    }
+                    case "gradle-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-gradle", projectPath.toString()));
+                    }
+                    case "npm-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-npm", projectPath.toString()));
+                    }
+                    case "postgres-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-postgres"));
+                        server.put("env", Map.of(
+                            "POSTGRES_CONNECTION_STRING",
+                            "${" + envVarNames.getOrDefault("POSTGRES_CONNECTION_STRING", "DATABASE_URL") + "}"
+                        ));
+                    }
+                    case "docker-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-docker"));
                     }
                     default -> {
                         server.put("command", "npx");
@@ -410,7 +457,27 @@ public class SetupCommand implements Runnable {
             analysisForConfig.setRecommendedMcps(selectedMcps);
 
             if (agent == AgentType.BOB) {
-                configurationGenerator.generateBobWorkspace(projectPath.toString(), analysisForConfig, systemPrompt, selectedSkills);
+                String modelName = "gpt-4";
+                double temperature = 0.7;
+                int maxTokens = 2000;
+                var providerConfig = aiProviderService.getCurrentConfig();
+                if (providerConfig != null && providerConfig.isValid()) {
+                    if (providerConfig.getModelName() != null && !providerConfig.getModelName().isBlank()) {
+                        modelName = providerConfig.getModelName();
+                    }
+                    temperature = providerConfig.getTemperature();
+                    maxTokens = providerConfig.getMaxTokens();
+                }
+
+                configurationGenerator.generateBobWorkspace(
+                    projectPath.toString(),
+                    analysisForConfig,
+                    systemPrompt,
+                    selectedSkills,
+                    modelName,
+                    temperature,
+                    maxTokens
+                );
                 configurationGenerator.generateBobProjectMcpConfig(projectPath.toString(), bobMcpServers);
                 configurationGenerator.generateBobCustomModes(projectPath.toString(), workflow);
                 configurationGenerator.generateBobRules(projectPath.toString(), workflow, selectedSkills, selectedMcps);

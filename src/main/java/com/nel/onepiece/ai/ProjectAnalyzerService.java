@@ -3,6 +3,7 @@ package com.nel.onepiece.ai;
 import com.nel.onepiece.model.ProjectAnalysis;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -20,6 +21,8 @@ import java.util.stream.Stream;
 @ApplicationScoped
 public class ProjectAnalyzerService {
 
+    private static final Logger LOG = Logger.getLogger(ProjectAnalyzerService.class);
+
     @Inject
     ProjectAnalyzerAIImpl analyzerAI;
 
@@ -36,8 +39,7 @@ public class ProjectAnalyzerService {
         try {
             // Check if AI provider is configured
             if (!aiProviderService.isConfigured()) {
-                System.err.println("Warning: AI provider not configured. Using fallback analysis.");
-                System.err.println("Run 'onepiece settings' to configure an AI provider for enhanced analysis.");
+                LOG.debug("AI provider not configured. Using fallback analysis.");
                 return fallbackAnalysis(projectPath);
             }
 
@@ -49,8 +51,7 @@ public class ProjectAnalyzerService {
             return normalizeAnalysis(analysis);
             
         } catch (Exception e) {
-            System.err.println("Warning: AI analysis failed: " + e.getMessage());
-            System.err.println("Falling back to manual detection...");
+            LOG.debugf("AI analysis failed: %s", e.getMessage());
             // Fallback to manual detection if AI fails
             return fallbackAnalysis(projectPath);
         }
@@ -268,7 +269,7 @@ public class ProjectAnalyzerService {
             }
             return analyzerAI.generateSystemPrompt(analysis, agentType);
         } catch (Exception e) {
-            System.err.println("Warning: AI prompt generation failed: " + e.getMessage());
+            LOG.debugf("AI prompt generation failed: %s", e.getMessage());
             return generateFallbackSystemPrompt(analysis, agentType);
         }
     }
@@ -314,7 +315,7 @@ public class ProjectAnalyzerService {
             String skills = analyzerAI.recommendSkills(analysis);
             return List.of(skills.split(",\\s*"));
         } catch (Exception e) {
-            System.err.println("Warning: AI skill recommendation failed: " + e.getMessage());
+            LOG.debugf("AI skill recommendation failed: %s", e.getMessage());
             // Fallback skills
             return List.of("code-review", "test-generation", "documentation");
         }
