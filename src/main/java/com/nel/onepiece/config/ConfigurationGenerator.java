@@ -248,9 +248,18 @@ public class ConfigurationGenerator {
         Files.writeString(envPath, envContent.toString());
     }
 
-    public void generateBobProjectMcpConfig(String projectPath, List<String> mcpNames, Map<String, String> envVarNames) throws IOException {
+    public void generateBobProjectMcpConfig(String projectPath, Map<String, Map<String, Object>> mcpServers) throws IOException {
         Map<String, Object> root = new LinkedHashMap<>();
-        Map<String, Object> servers = new LinkedHashMap<>();
+        root.put("mcpServers", mcpServers);
+
+        Path bobDir = Paths.get(projectPath, ".bob");
+        Files.createDirectories(bobDir);
+        Path mcpPath = bobDir.resolve("mcp.json");
+        objectMapper.writeValue(mcpPath.toFile(), root);
+    }
+
+    public void generateBobProjectMcpConfig(String projectPath, List<String> mcpNames, Map<String, String> envVarNames) throws IOException {
+        Map<String, Map<String, Object>> servers = new LinkedHashMap<>();
 
         for (String mcpName : mcpNames) {
             Map<String, Object> server = new LinkedHashMap<>();
@@ -258,56 +267,52 @@ public class ConfigurationGenerator {
             server.put("cwd", projectPath);
 
             switch (mcpName) {
-                case "filesystem-mcp":
+                case "filesystem-mcp" -> {
                     server.put("command", "npx");
                     server.put("args", List.of("-y", "@modelcontextprotocol/server-filesystem", projectPath));
-                    break;
-                case "github-mcp":
+                }
+                case "github-mcp" -> {
                     server.put("command", "npx");
                     server.put("args", List.of("-y", "@modelcontextprotocol/server-github"));
                     server.put("env", Map.of(
                         "GITHUB_PERSONAL_ACCESS_TOKEN",
                         "${" + envVarNames.getOrDefault("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN") + "}"
                     ));
-                    break;
-                case "maven-mcp":
+                }
+                case "maven-mcp" -> {
                     server.put("command", "npx");
                     server.put("args", List.of("-y", "@modelcontextprotocol/server-maven", projectPath));
-                    break;
-                case "gradle-mcp":
+                }
+                case "gradle-mcp" -> {
                     server.put("command", "npx");
                     server.put("args", List.of("-y", "@modelcontextprotocol/server-gradle", projectPath));
-                    break;
-                case "npm-mcp":
+                }
+                case "npm-mcp" -> {
                     server.put("command", "npx");
                     server.put("args", List.of("-y", "@modelcontextprotocol/server-npm", projectPath));
-                    break;
-                case "postgres-mcp":
+                }
+                case "postgres-mcp" -> {
                     server.put("command", "npx");
                     server.put("args", List.of("-y", "@modelcontextprotocol/server-postgres"));
                     server.put("env", Map.of(
                         "POSTGRES_CONNECTION_STRING",
                         "${" + envVarNames.getOrDefault("POSTGRES_CONNECTION_STRING", "DATABASE_URL") + "}"
                     ));
-                    break;
-                case "docker-mcp":
+                }
+                case "docker-mcp" -> {
                     server.put("command", "npx");
                     server.put("args", List.of("-y", "@modelcontextprotocol/server-docker"));
-                    break;
-                default:
+                }
+                default -> {
                     server.put("command", "npx");
                     server.put("args", List.of("-y", mcpName));
+                }
             }
 
             servers.put(mcpName, server);
         }
 
-        root.put("mcpServers", servers);
-
-        Path bobDir = Paths.get(projectPath, ".bob");
-        Files.createDirectories(bobDir);
-        Path mcpPath = bobDir.resolve("mcp.json");
-        objectMapper.writeValue(mcpPath.toFile(), root);
+        generateBobProjectMcpConfig(projectPath, servers);
     }
 
     public void generateBobCustomModes(String projectPath, String workflow) throws IOException {
@@ -380,6 +385,55 @@ customModes:
         );
 
         Files.writeString(rulesDir.resolve("01-workspace.md"), rules);
+    }
+
+    public void generateBobSkills(String projectPath, List<String> skills) throws IOException {
+        Path skillsDir = Paths.get(projectPath, ".bob", "skills");
+        Files.createDirectories(skillsDir);
+
+        for (String skill : skills) {
+            String normalized = skill.trim();
+            if (normalized.isEmpty()) {
+                continue;
+            }
+
+            if (!List.of("bug-hunter", "context7-auto-research").contains(normalized)) {
+                continue;
+            }
+
+            Path dir = skillsDir.resolve(normalized);
+            Files.createDirectories(dir);
+
+            String content;
+            if ("bug-hunter".equals(normalized)) {
+                content = """
+---
+name: bug-hunter
+description: Systematically find, reproduce, and fix functional bugs with evidence-based debugging.
+---
+
+1. Reproduce the bug with clear steps and capture logs/output.
+2. Identify the failing component and trace to root cause.
+3. Implement the smallest safe fix.
+4. Add a regression check (test or reproducible command).
+5. Summarize the change and verification results.
+""";
+            } else {
+                content = """
+---
+name: context7-auto-research
+description: Gather up-to-date documentation and integration details for libraries and platforms used in this project.
+---
+
+1. Identify the library/platform being used (Quarkus, LangChain4j, IBM Cloud, MCP).
+2. Retrieve the most relevant docs for the exact versions and integration points.
+3. Summarize best practices and required configuration.
+4. Propose changes focused on functionality first.
+""";
+            }
+
+            Files.writeString(dir.resolve("SKILL.md"), content);
+        }
     }
 }
 

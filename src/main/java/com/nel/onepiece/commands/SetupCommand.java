@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -237,6 +238,7 @@ public class SetupCommand implements Runnable {
 
         List<String> selectedMcps = analysis.getRecommendedMcps() != null ? new ArrayList<>(analysis.getRecommendedMcps()) : List.of("filesystem-mcp");
         Map<String, String> envVarNames = new HashMap<>();
+        Map<String, Map<String, Object>> bobMcpServers = new LinkedHashMap<>();
         if (!nonInteractive) {
             formatter.println(formatter.bold("? MCP selection:"));
             formatter.println(formatter.muted("Recommended: " + String.join(", ", selectedMcps)));
@@ -273,6 +275,130 @@ public class SetupCommand implements Runnable {
             formatter.println("");
         }
 
+        for (String mcp : selectedMcps) {
+            Map<String, Object> server = new LinkedHashMap<>();
+            server.put("disabled", false);
+
+            if (!nonInteractive) {
+                formatter.println(formatter.bold("? Transport for " + mcp + ":"));
+                formatter.println("  1. STDIO (local)");
+                formatter.println("  2. Remote (HTTP)");
+                formatter.println("");
+                String t = menu.promptInput("Select option (1-2)");
+                boolean remote = "2".equals(t != null ? t.trim() : "");
+
+                if (remote) {
+                    String url = menu.promptInput("Enter MCP server URL (example: https://host/mcp)");
+                    if (url == null || url.trim().isEmpty()) {
+                        formatter.println(formatter.errorMessage("URL is required for remote MCP server"));
+                        return;
+                    }
+                    server.put("url", url.trim());
+
+                    boolean addHeaders = menu.promptConfirm("Add HTTP headers?", false);
+                    if (addHeaders) {
+                        Map<String, String> headers = new LinkedHashMap<>();
+                        while (true) {
+                            String headerName = menu.promptInput("Header name (press Enter to finish)");
+                            if (headerName == null || headerName.trim().isEmpty()) {
+                                break;
+                            }
+                            String headerValue = menu.promptInput("Header value (use ${ENV_VAR} for env placeholders)");
+                            if (headerValue != null && !headerValue.trim().isEmpty()) {
+                                headers.put(headerName.trim(), headerValue.trim());
+                            }
+                        }
+                        if (!headers.isEmpty()) {
+                            server.put("headers", headers);
+                        }
+                    }
+                } else {
+                    server.put("cwd", projectPath.toString());
+
+                    switch (mcp) {
+                        case "filesystem-mcp" -> {
+                            server.put("command", "npx");
+                            server.put("args", List.of("-y", "@modelcontextprotocol/server-filesystem", projectPath.toString()));
+                        }
+                        case "github-mcp" -> {
+                            server.put("command", "npx");
+                            server.put("args", List.of("-y", "@modelcontextprotocol/server-github"));
+                            server.put("env", Map.of(
+                                "GITHUB_PERSONAL_ACCESS_TOKEN",
+                                "${" + envVarNames.getOrDefault("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN") + "}"
+                            ));
+                        }
+                        case "maven-mcp" -> {
+                            server.put("command", "npx");
+                            server.put("args", List.of("-y", "@modelcontextprotocol/server-maven", projectPath.toString()));
+                        }
+                        case "gradle-mcp" -> {
+                            server.put("command", "npx");
+                            server.put("args", List.of("-y", "@modelcontextprotocol/server-gradle", projectPath.toString()));
+                        }
+                        case "npm-mcp" -> {
+                            server.put("command", "npx");
+                            server.put("args", List.of("-y", "@modelcontextprotocol/server-npm", projectPath.toString()));
+                        }
+                        case "postgres-mcp" -> {
+                            server.put("command", "npx");
+                            server.put("args", List.of("-y", "@modelcontextprotocol/server-postgres"));
+                            server.put("env", Map.of(
+                                "POSTGRES_CONNECTION_STRING",
+                                "${" + envVarNames.getOrDefault("POSTGRES_CONNECTION_STRING", "DATABASE_URL") + "}"
+                            ));
+                        }
+                        case "docker-mcp" -> {
+                            server.put("command", "npx");
+                            server.put("args", List.of("-y", "@modelcontextprotocol/server-docker"));
+                        }
+                        default -> {
+                            server.put("command", "npx");
+                            server.put("args", List.of("-y", mcp));
+                        }
+                    }
+
+                    String allow = menu.promptInput("Always allow tools (comma-separated, optional)");
+                    if (allow != null && !allow.trim().isEmpty()) {
+                        List<String> tools = new ArrayList<>();
+                        for (String part : allow.split(",")) {
+                            String s = part.trim();
+                            if (!s.isEmpty()) {
+                                tools.add(s);
+                            }
+                        }
+                        if (!tools.isEmpty()) {
+                            server.put("alwaysAllow", tools);
+                        }
+                    }
+                }
+                formatter.println("");
+            } else {
+                server.put("cwd", projectPath.toString());
+                switch (mcp) {
+                    case "filesystem-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-filesystem", projectPath.toString()));
+                    }
+                    case "github-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-github"));
+                        server.put("env", Map.of("GITHUB_PERSONAL_ACCESS_TOKEN", "${GITHUB_TOKEN}"));
+                    }
+                    case "maven-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-maven", projectPath.toString()));
+                    }
+                    default -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", mcp));
+                    }
+                }
+            }
+
+            bobMcpServers.put(mcp, server);
+        }
+
         boolean wroteBobConfig = false;
         try {
             ProjectAnalysis analysisForConfig = analysis;
@@ -280,9 +406,10 @@ public class SetupCommand implements Runnable {
 
             if (agent == AgentType.BOB) {
                 configurationGenerator.generateBobWorkspace(projectPath.toString(), analysisForConfig, systemPrompt, selectedSkills);
-                configurationGenerator.generateBobProjectMcpConfig(projectPath.toString(), selectedMcps, envVarNames);
+                configurationGenerator.generateBobProjectMcpConfig(projectPath.toString(), bobMcpServers);
                 configurationGenerator.generateBobCustomModes(projectPath.toString(), workflow);
                 configurationGenerator.generateBobRules(projectPath.toString(), workflow, selectedSkills, selectedMcps);
+                configurationGenerator.generateBobSkills(projectPath.toString(), selectedSkills);
                 wroteBobConfig = true;
             }
             configurationGenerator.generateMcpRegistry(projectPath.toString(), analysisForConfig);
