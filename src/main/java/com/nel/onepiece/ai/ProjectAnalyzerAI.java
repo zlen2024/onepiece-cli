@@ -3,13 +3,11 @@ package com.nel.onepiece.ai;
 import com.nel.onepiece.model.ProjectAnalysis;
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
-import io.quarkiverse.langchain4j.RegisterAiService;
 
 /**
  * AI service for analyzing project structure and recommending configurations.
  * Uses LangChain4j to interact with OpenAI GPT-4.
  */
-@RegisterAiService
 public interface ProjectAnalyzerAI {
 
     /**

@@ -115,6 +115,10 @@ public class AIProviderService {
     public boolean isConfigured() {
         return configManager.hasAIProvider();
     }
+
+    public AIProviderConfig getCurrentConfig() {
+        return configManager.getAIProviderConfig();
+    }
 }
 
 // Made with Bob

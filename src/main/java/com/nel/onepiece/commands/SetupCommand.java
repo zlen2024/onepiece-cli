@@ -1,8 +1,18 @@
 package com.nel.onepiece.commands;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nel.onepiece.ai.AgentPresetBuilderAIImpl;
 import com.nel.onepiece.ai.ProjectAnalyzerService;
+import com.nel.onepiece.ai.AIProviderService;
+import com.nel.onepiece.config.PlaceholderRenderer;
+import com.nel.onepiece.config.PresetLibraryManager;
 import com.nel.onepiece.config.ConfigurationGenerator;
 import com.nel.onepiece.model.ProjectAnalysis;
+import com.nel.onepiece.model.presets.AgentPreset;
+import com.nel.onepiece.model.presets.McpPreset;
+import com.nel.onepiece.model.presets.PresetLibrary;
+import com.nel.onepiece.model.presets.SkillPreset;
 import com.nel.onepiece.ui.ColorFormatter;
 import com.nel.onepiece.ui.InteractiveMenu;
 import com.nel.onepiece.ui.ProgressIndicator;
@@ -19,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Setup command - Bootstrap AI agent environment
@@ -42,6 +53,15 @@ public class SetupCommand implements Runnable {
 
     @Inject
     ProjectAnalyzerService projectAnalyzerService;
+
+    @Inject
+    AIProviderService aiProviderService;
+
+    @Inject
+    PresetLibraryManager presetLibraryManager;
+
+    @Inject
+    AgentPresetBuilderAIImpl agentPresetBuilderAI;
 
     @Inject
     ConfigurationGenerator configurationGenerator;
@@ -174,8 +194,26 @@ public class SetupCommand implements Runnable {
         }
         formatter.println("");
 
-        String workflow = "agile";
+        if (!nonInteractive && agent == AgentType.BOB) {
+            runBobWizard(projectPath, analysis);
+            return;
+        }
+
+        boolean advanced = false;
         if (!nonInteractive) {
+            boolean useRecommended = menu.promptConfirm("Use recommended settings (fast setup)?", true);
+            advanced = !useRecommended;
+            formatter.println("");
+        }
+
+        if (!aiProviderService.isConfigured()) {
+            formatter.println(formatter.warning("⚠️  AI provider is not configured. Setup will use fallback defaults."));
+            formatter.println(formatter.muted("Run: onepiece settings"));
+            formatter.println("");
+        }
+
+        String workflow = "agile";
+        if (!nonInteractive && advanced) {
             formatter.println(formatter.bold("? Select project workflow:"));
             formatter.println("");
             formatter.println("  1. Agile");
@@ -211,13 +249,20 @@ public class SetupCommand implements Runnable {
             normalized.add("context7-auto-research");
             skills = new ArrayList<>(normalized);
             progress.success("Configuration generated");
-        } catch (Exception e) {
-            progress.error("Configuration generation failed: " + e.getMessage());
-            return;
+        } catch (Throwable t) {
+            progress.success("Configuration generated");
+            formatter.println(formatter.warning("⚠️  AI generation failed; using fallback defaults."));
+            formatter.println(formatter.muted(t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName()));
+            systemPrompt = String.format(
+                "You are %s, an AI coding assistant working on a %s project.",
+                agent.label,
+                analysis.getFramework()
+            );
+            skills = List.of("bug-hunter", "context7-auto-research");
         }
 
         List<String> selectedSkills = skills;
-        if (!nonInteractive) {
+        if (!nonInteractive && advanced) {
             formatter.println("");
             formatter.println(formatter.bold("? Skills selection:"));
             formatter.println(formatter.muted("Recommended: " + String.join(", ", skills)));
@@ -244,7 +289,7 @@ public class SetupCommand implements Runnable {
         List<String> selectedMcps = analysis.getRecommendedMcps() != null ? new ArrayList<>(analysis.getRecommendedMcps()) : List.of("filesystem-mcp");
         Map<String, String> envVarNames = new HashMap<>();
         Map<String, Map<String, Object>> bobMcpServers = new LinkedHashMap<>();
-        if (!nonInteractive) {
+        if (!nonInteractive && advanced) {
             formatter.println(formatter.bold("? MCP selection:"));
             formatter.println(formatter.muted("Recommended: " + String.join(", ", selectedMcps)));
             boolean useRecommended = menu.promptConfirm("Use recommended MCP servers?", true);
@@ -284,7 +329,7 @@ public class SetupCommand implements Runnable {
             Map<String, Object> server = new LinkedHashMap<>();
             server.put("disabled", false);
 
-            if (!nonInteractive) {
+            if (!nonInteractive && advanced) {
                 formatter.println(formatter.bold("? Transport for " + mcp + ":"));
                 formatter.println("  1. STDIO (local)");
                 formatter.println("  2. Remote (HTTP)");
@@ -388,11 +433,34 @@ public class SetupCommand implements Runnable {
                     case "github-mcp" -> {
                         server.put("command", "npx");
                         server.put("args", List.of("-y", "@modelcontextprotocol/server-github"));
-                        server.put("env", Map.of("GITHUB_PERSONAL_ACCESS_TOKEN", "${GITHUB_TOKEN}"));
+                        server.put("env", Map.of(
+                            "GITHUB_PERSONAL_ACCESS_TOKEN",
+                            "${" + envVarNames.getOrDefault("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN") + "}"
+                        ));
                     }
                     case "maven-mcp" -> {
                         server.put("command", "npx");
                         server.put("args", List.of("-y", "@modelcontextprotocol/server-maven", projectPath.toString()));
+                    }
+                    case "gradle-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-gradle", projectPath.toString()));
+                    }
+                    case "npm-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-npm", projectPath.toString()));
+                    }
+                    case "postgres-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-postgres"));
+                        server.put("env", Map.of(
+                            "POSTGRES_CONNECTION_STRING",
+                            "${" + envVarNames.getOrDefault("POSTGRES_CONNECTION_STRING", "DATABASE_URL") + "}"
+                        ));
+                    }
+                    case "docker-mcp" -> {
+                        server.put("command", "npx");
+                        server.put("args", List.of("-y", "@modelcontextprotocol/server-docker"));
                     }
                     default -> {
                         server.put("command", "npx");
@@ -410,7 +478,27 @@ public class SetupCommand implements Runnable {
             analysisForConfig.setRecommendedMcps(selectedMcps);
 
             if (agent == AgentType.BOB) {
-                configurationGenerator.generateBobWorkspace(projectPath.toString(), analysisForConfig, systemPrompt, selectedSkills);
+                String modelName = "gpt-4";
+                double temperature = 0.7;
+                int maxTokens = 2000;
+                var providerConfig = aiProviderService.getCurrentConfig();
+                if (providerConfig != null && providerConfig.isValid()) {
+                    if (providerConfig.getModelName() != null && !providerConfig.getModelName().isBlank()) {
+                        modelName = providerConfig.getModelName();
+                    }
+                    temperature = providerConfig.getTemperature();
+                    maxTokens = providerConfig.getMaxTokens();
+                }
+
+                configurationGenerator.generateBobWorkspace(
+                    projectPath.toString(),
+                    analysisForConfig,
+                    systemPrompt,
+                    selectedSkills,
+                    modelName,
+                    temperature,
+                    maxTokens
+                );
                 configurationGenerator.generateBobProjectMcpConfig(projectPath.toString(), bobMcpServers);
                 configurationGenerator.generateBobCustomModes(projectPath.toString(), workflow);
                 configurationGenerator.generateBobRules(projectPath.toString(), workflow, selectedSkills, selectedMcps);
@@ -460,6 +548,522 @@ public class SetupCommand implements Runnable {
                 formatter.println(formatter.muted("(This would launch the agent in a real implementation)"));
             }
         }
+    }
+
+    private static class BobSetupState {
+        List<AgentPreset> agentPresets = new ArrayList<>();
+        AgentPreset primaryAgent;
+        List<String> skillSlugs = new ArrayList<>();
+        List<String> mcpNames = new ArrayList<>();
+        String githubTokenEnv = "GITHUB_TOKEN";
+        String databaseUrlEnv = "DATABASE_URL";
+        boolean generated = false;
+    }
+
+    private void runBobWizard(Path projectPath, ProjectAnalysis analysis) {
+        PresetLibrary library = presetLibraryManager.loadOrCreate();
+
+        BobSetupState state = new BobSetupState();
+        if (!library.getAgents().isEmpty()) {
+            AgentPreset first = library.getAgents().get(0);
+            state.agentPresets.add(first);
+            state.primaryAgent = first;
+        }
+        if (library.getSkills().stream().anyMatch(s -> "bug-hunter".equals(s.getSlug()))) {
+            state.skillSlugs.add("bug-hunter");
+        }
+        if (library.getSkills().stream().anyMatch(s -> "context7-auto-research".equals(s.getSlug()))) {
+            state.skillSlugs.add("context7-auto-research");
+        }
+        List<String> recommended = analysis.getRecommendedMcps() != null ? analysis.getRecommendedMcps() : List.of("filesystem-mcp");
+        for (String name : recommended) {
+            if (library.getMcps().stream().anyMatch(m -> name.equals(m.getName()))) {
+                state.mcpNames.add(name);
+            }
+        }
+        if (!state.mcpNames.contains("filesystem-mcp") && library.getMcps().stream().anyMatch(m -> "filesystem-mcp".equals(m.getName()))) {
+            state.mcpNames.add(0, "filesystem-mcp");
+        }
+        if (state.mcpNames.isEmpty() && library.getMcps().stream().anyMatch(m -> "filesystem-mcp".equals(m.getName()))) {
+            state.mcpNames.add("filesystem-mcp");
+        }
+
+        while (true) {
+            formatter.println(formatter.section("🤖 IBM Bob Setup"));
+            formatter.println("");
+
+            formatter.println(formatter.bold("Current selection:"));
+            formatter.println("   Agents: " + state.agentPresets.size() + (state.primaryAgent != null ? " (primary: " + state.primaryAgent.getDisplayName() + ")" : ""));
+            formatter.println("   Skills: " + state.skillSlugs.size());
+            formatter.println("   MCP: " + state.mcpNames.size());
+            formatter.println("   Generated: " + (state.generated ? "yes" : "no"));
+            formatter.println("");
+
+            formatter.println(formatter.bold("? What would you like to configure?"));
+            formatter.println("");
+            formatter.println("  1. > agent");
+            formatter.println("  2. > skills");
+            formatter.println("  3. > mcp");
+            formatter.println("  4. > generate");
+            formatter.println("  5. > start-bob");
+            formatter.println("  6. > back");
+            formatter.println("");
+
+            String input = menu.promptInput("Select option (1-6)");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
+
+            switch (input.trim()) {
+                case "1" -> {
+                    selectBobAgentPreset(projectPath, analysis, library, state);
+                    library = presetLibraryManager.loadOrCreate();
+                }
+                case "2" -> selectBobSkills(library, state);
+                case "3" -> selectBobMcps(library, state);
+                case "4" -> {
+                    boolean ok = generateBobFromWizard(projectPath, analysis, library, state);
+                    if (ok) {
+                        state.generated = true;
+                    }
+                }
+                case "5" -> printStartBobInstructions(projectPath, state);
+                case "6" -> {
+                    formatter.println("");
+                    return;
+                }
+                default -> formatter.println(formatter.errorMessage("Invalid selection"));
+            }
+
+            formatter.println("");
+        }
+    }
+
+    private void selectBobAgentPreset(Path projectPath, ProjectAnalysis analysis, PresetLibrary library, BobSetupState state) {
+        formatter.println(formatter.section("> agent"));
+        formatter.println("");
+
+        List<AgentPreset> presets = library.getAgents().stream()
+            .filter(a -> a != null && "bob".equalsIgnoreCase(a.getAgentType()))
+            .toList();
+
+        formatter.println("  0. [ ] none");
+        for (int i = 0; i < presets.size(); i++) {
+            AgentPreset p = presets.get(i);
+            boolean selected = state.agentPresets.stream().anyMatch(a -> a != null && safe(p.getId()).equals(a.getId()));
+            boolean primary = state.primaryAgent != null && safe(p.getId()).equals(state.primaryAgent.getId());
+            formatter.println(String.format(
+                "  %d. [%s] %s%s - %s",
+                i + 1,
+                selected ? "x" : " ",
+                safe(p.getDisplayName()),
+                primary ? " (primary)" : "",
+                safe(p.getDescription())
+            ));
+        }
+        formatter.println("");
+        formatter.println("  C. Custom agent");
+        formatter.println("  B. Back");
+        formatter.println("");
+
+        String input = menu.promptInput("Select agents (comma-separated), or C/B");
+        if (input == null) {
+            formatter.println(formatter.errorMessage("Invalid input"));
+            return;
+        }
+        String trimmed = input.trim();
+        if (trimmed.isEmpty()) {
+            return;
+        }
+
+        if ("b".equalsIgnoreCase(trimmed)) {
+            return;
+        }
+
+        if ("c".equalsIgnoreCase(trimmed)) {
+            AgentPreset custom = buildCustomAgent(projectPath, analysis, library);
+            if (custom == null) {
+                return;
+            }
+
+            state.agentPresets.add(custom);
+            state.primaryAgent = custom;
+
+            boolean save = menu.promptConfirm("Save this agent to presets library?", true);
+            if (save) {
+                presetLibraryManager.upsertAgent(library, custom);
+                try {
+                    presetLibraryManager.save(library);
+                    presetLibraryManager.exportTemplates(library);
+                } catch (Exception e) {
+                    formatter.println(formatter.warningMessage("Failed to save presets: " + e.getMessage()));
+                }
+            }
+            return;
+        }
+
+        List<Integer> choices = new ArrayList<>();
+        for (String part : trimmed.split(",")) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            try {
+                choices.add(Integer.parseInt(p));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        if (choices.contains(0)) {
+            state.agentPresets = new ArrayList<>();
+            state.primaryAgent = null;
+            return;
+        }
+
+        List<AgentPreset> selected = new ArrayList<>();
+        for (int idx : choices) {
+            if (idx < 1 || idx > presets.size()) {
+                continue;
+            }
+            selected.add(presets.get(idx - 1));
+        }
+
+        if (selected.isEmpty()) {
+            formatter.println(formatter.errorMessage("Select at least one agent, or choose 0 for none"));
+            return;
+        }
+
+        state.agentPresets = selected;
+        state.primaryAgent = selected.get(0);
+    }
+
+    private void selectBobSkills(PresetLibrary library, BobSetupState state) {
+        formatter.println(formatter.section("> skills"));
+        formatter.println("");
+
+        List<SkillPreset> skills = library.getSkills();
+        if (skills.isEmpty()) {
+            formatter.println(formatter.warningMessage("No skill presets found"));
+            return;
+        }
+
+        formatter.println("  0. [ ] none");
+        for (int i = 0; i < skills.size(); i++) {
+            SkillPreset s = skills.get(i);
+            boolean enabled = state.skillSlugs.contains(s.getSlug());
+            formatter.println(String.format("  %d. [%s] %s (%s)", i + 1, enabled ? "x" : " ", safe(s.getName()), safe(s.getSlug())));
+        }
+
+        formatter.println("");
+        String input = menu.promptInput("Enter skill numbers (comma-separated), 0 for none, or press Enter to keep");
+        if (input == null) {
+            formatter.println(formatter.errorMessage("Invalid input"));
+            return;
+        }
+        if (input.trim().isEmpty()) {
+            return;
+        }
+
+        if (input.trim().equals("0")) {
+            state.skillSlugs = new ArrayList<>();
+            return;
+        }
+
+        List<String> selected = new ArrayList<>();
+        for (String part : input.split(",")) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            if (p.equals("0")) {
+                state.skillSlugs = new ArrayList<>();
+                return;
+            }
+            try {
+                int idx = Integer.parseInt(p);
+                if (idx >= 1 && idx <= skills.size()) {
+                    String slug = skills.get(idx - 1).getSlug();
+                    if (slug != null && !slug.isBlank() && !selected.contains(slug)) {
+                        selected.add(slug);
+                    }
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        state.skillSlugs = selected;
+    }
+
+    private void selectBobMcps(PresetLibrary library, BobSetupState state) {
+        formatter.println(formatter.section("> mcp"));
+        formatter.println("");
+
+        List<McpPreset> mcps = library.getMcps();
+        if (mcps.isEmpty()) {
+            formatter.println(formatter.warningMessage("No MCP presets found"));
+            return;
+        }
+
+        formatter.println("  0. [ ] none");
+        for (int i = 0; i < mcps.size(); i++) {
+            McpPreset m = mcps.get(i);
+            boolean enabled = state.mcpNames.contains(m.getName());
+            formatter.println(String.format("  %d. [%s] %s", i + 1, enabled ? "x" : " ", safe(m.getName())));
+        }
+
+        formatter.println("");
+        String input = menu.promptInput("Enter MCP numbers (comma-separated), 0 for none, or press Enter to keep");
+        if (input == null) {
+            formatter.println(formatter.errorMessage("Invalid input"));
+            return;
+        }
+        if (input.trim().isEmpty()) {
+            return;
+        }
+
+        if (input.trim().equals("0")) {
+            state.mcpNames = new ArrayList<>();
+            return;
+        }
+
+        List<String> selected = new ArrayList<>();
+        for (String part : input.split(",")) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            if (p.equals("0")) {
+                state.mcpNames = new ArrayList<>();
+                return;
+            }
+            try {
+                int idx = Integer.parseInt(p);
+                if (idx >= 1 && idx <= mcps.size()) {
+                    String name = mcps.get(idx - 1).getName();
+                    if (name != null && !name.isBlank() && !selected.contains(name)) {
+                        selected.add(name);
+                    }
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        state.mcpNames = selected;
+
+        if (state.mcpNames.contains("github-mcp")) {
+            String v = menu.promptInput("Env var name for GitHub token (default: " + state.githubTokenEnv + ")");
+            if (v != null && !v.trim().isEmpty()) {
+                state.githubTokenEnv = v.trim();
+            }
+        }
+
+        if (state.mcpNames.contains("postgres-mcp")) {
+            String v = menu.promptInput("Env var name for Postgres connection (default: " + state.databaseUrlEnv + ")");
+            if (v != null && !v.trim().isEmpty()) {
+                state.databaseUrlEnv = v.trim();
+            }
+        }
+    }
+
+    private boolean generateBobFromWizard(Path projectPath, ProjectAnalysis analysis, PresetLibrary library, BobSetupState state) {
+        if (state.primaryAgent == null || state.agentPresets.isEmpty()) {
+            formatter.println(formatter.errorMessage("Select at least one agent first"));
+            return false;
+        }
+
+        Map<String, Map<String, Object>> bobMcpServers = new LinkedHashMap<>();
+        Map<String, String> placeholders = new LinkedHashMap<>();
+        placeholders.put("PROJECT_DIR", projectPath.toString());
+        placeholders.put("GITHUB_TOKEN_ENV", state.githubTokenEnv);
+        placeholders.put("DATABASE_URL_ENV", state.databaseUrlEnv);
+        PlaceholderRenderer renderer = new PlaceholderRenderer(placeholders);
+
+        for (String name : state.mcpNames) {
+            Optional<McpPreset> presetOpt = presetLibraryManager.findMcpByName(library, name);
+            if (presetOpt.isEmpty()) {
+                continue;
+            }
+            Map<String, Object> rendered = renderer.renderMap(presetOpt.get().getServer());
+            bobMcpServers.put(name, rendered);
+        }
+
+        List<SkillPreset> skillPresets = new ArrayList<>();
+        for (String slug : state.skillSlugs) {
+            presetLibraryManager.findSkillBySlug(library, slug).ifPresent(skillPresets::add);
+        }
+
+        progress.startSpinner("Generating Bob configuration");
+
+        try {
+            ProjectAnalysis analysisForConfig = analysis;
+            analysisForConfig.setRecommendedMcps(new ArrayList<>(state.mcpNames));
+
+            String modelName = "gpt-4";
+            double temperature = 0.7;
+            int maxTokens = 2000;
+            var providerConfig = aiProviderService.getCurrentConfig();
+            if (providerConfig != null && providerConfig.isValid()) {
+                if (providerConfig.getModelName() != null && !providerConfig.getModelName().isBlank()) {
+                    modelName = providerConfig.getModelName();
+                }
+                temperature = providerConfig.getTemperature();
+                maxTokens = providerConfig.getMaxTokens();
+            }
+
+            configurationGenerator.generateBobWorkspace(
+                projectPath.toString(),
+                analysisForConfig,
+                state.primaryAgent.getSystemPrompt(),
+                new ArrayList<>(state.skillSlugs),
+                modelName,
+                temperature,
+                maxTokens
+            );
+            configurationGenerator.generateBobProjectMcpConfig(projectPath.toString(), bobMcpServers);
+            List<AgentPreset.CustomMode> modes = new ArrayList<>();
+            for (AgentPreset agent : state.agentPresets) {
+                if (agent != null && agent.getCustomMode() != null) {
+                    modes.add(agent.getCustomMode());
+                }
+            }
+            configurationGenerator.generateBobCustomModesFromPresets(projectPath.toString(), modes);
+            configurationGenerator.generateBobSkillsFromPresets(projectPath.toString(), skillPresets);
+            configurationGenerator.generateBobRules(projectPath.toString(), "agile", new ArrayList<>(state.skillSlugs), new ArrayList<>(state.mcpNames));
+
+            configurationGenerator.generateMcpRegistry(projectPath.toString(), analysisForConfig);
+            configurationGenerator.generateProjectMetadata(projectPath.toString(), analysisForConfig, "bob");
+            configurationGenerator.generateEnvExample(projectPath.toString(), analysisForConfig);
+
+            progress.success("Bob configuration generated");
+        } catch (Exception e) {
+            progress.error("Failed to generate configuration: " + e.getMessage());
+            return false;
+        }
+
+        formatter.println("");
+        formatter.println(formatter.success("✅ Bob setup generated!"));
+        formatter.println("");
+
+        formatter.println(formatter.bold("📝 Generated files:"));
+        formatter.println(formatter.successMessage("   • .bob.workspace"));
+        formatter.println(formatter.successMessage("   • .bob/mcp.json"));
+        formatter.println(formatter.successMessage("   • .bob/custom_modes.yaml"));
+        formatter.println(formatter.successMessage("   • .bob/rules/01-workspace.md"));
+        formatter.println(formatter.successMessage("   • .bob/skills/**/SKILL.md (if selected)"));
+        formatter.println(formatter.successMessage("   • .onepiece/mcp-registry.json"));
+        formatter.println(formatter.successMessage("   • .onepiece/project.json"));
+        formatter.println(formatter.successMessage("   • .env.example"));
+        return true;
+    }
+
+    private AgentPreset buildCustomAgent(Path projectPath, ProjectAnalysis analysis, PresetLibrary library) {
+        String userRequest = menu.promptInput("Describe your custom agent");
+        if (userRequest == null || userRequest.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("Description is required"));
+            return null;
+        }
+
+        String displayName = null;
+        String systemPrompt = null;
+
+        if (aiProviderService.isConfigured()) {
+            progress.startSpinner("Building custom agent with AI");
+            try {
+                String projectContext = String.format(
+                    "Project: %s\nLanguage: %s\nFramework: %s\nBuild tool: %s",
+                    projectPath,
+                    analysis.getLanguage(),
+                    analysis.getFramework(),
+                    analysis.getBuildTool()
+                );
+                String json = agentPresetBuilderAI.buildAgent(projectContext, userRequest.trim());
+                progress.stopSpinner();
+
+                ObjectMapper mapper = new ObjectMapper();
+                JsonNode node = mapper.readTree(json);
+                displayName = node.hasNonNull("displayName") ? node.get("displayName").asText() : null;
+                systemPrompt = node.hasNonNull("systemPrompt") ? node.get("systemPrompt").asText() : null;
+            } catch (Exception e) {
+                progress.stopSpinner();
+                formatter.println(formatter.warningMessage("AI generation failed; please enter values manually."));
+            }
+        }
+
+        if (displayName == null || displayName.isBlank()) {
+            displayName = menu.promptInput("Agent name");
+        }
+        if (displayName == null || displayName.isBlank()) {
+            formatter.println(formatter.errorMessage("Agent name is required"));
+            return null;
+        }
+
+        if (systemPrompt == null || systemPrompt.isBlank()) {
+            systemPrompt = menu.promptInput("System prompt");
+        }
+        if (systemPrompt == null || systemPrompt.isBlank()) {
+            formatter.println(formatter.errorMessage("System prompt is required"));
+            return null;
+        }
+
+        AgentPreset preset = new AgentPreset();
+        preset.setAgentType("bob");
+        preset.setDisplayName(displayName.trim());
+        preset.setDescription("Custom agent");
+        preset.setSystemPrompt(systemPrompt.trim());
+
+        String baseId = slugify(displayName);
+        String id = baseId;
+        int suffix = 2;
+        while (true) {
+            final String candidate = id;
+            boolean exists = library.getAgents().stream().anyMatch(a -> a != null && candidate.equals(a.getId()));
+            if (!exists) {
+                break;
+            }
+            id = baseId + "-" + suffix;
+            suffix++;
+        }
+        preset.setId(id);
+
+        AgentPreset.CustomMode mode = new AgentPreset.CustomMode();
+        mode.setSlug(id);
+        mode.setName(displayName.trim());
+        mode.setRoleDefinition("Custom agent");
+        mode.setWhenToUse("Use when you want this custom behavior.");
+        mode.setCustomInstructions(systemPrompt.trim());
+        mode.setGroups(List.of("read", "edit", "command", "mcp"));
+        preset.setCustomMode(mode);
+
+        return preset;
+    }
+
+    private void printStartBobInstructions(Path projectPath, BobSetupState state) {
+        if (!state.generated) {
+            formatter.println(formatter.warningMessage("Generate configuration first"));
+            return;
+        }
+
+        formatter.println(formatter.section("> start-bob"));
+        formatter.println("");
+        formatter.println("Next, run:");
+        formatter.println(formatter.muted("  cd " + projectPath));
+        formatter.println(formatter.muted("  bob start"));
+    }
+
+    private String safe(String s) {
+        return s == null ? "" : s;
+    }
+
+    private String slugify(String input) {
+        if (input == null) {
+            return "custom-agent";
+        }
+        String s = input.trim().toLowerCase();
+        s = s.replaceAll("[^a-z0-9]+", "-");
+        s = s.replaceAll("-{2,}", "-");
+        s = s.replaceAll("^-+", "").replaceAll("-+$", "");
+        return s.isEmpty() ? "custom-agent" : s;
     }
 }
 
