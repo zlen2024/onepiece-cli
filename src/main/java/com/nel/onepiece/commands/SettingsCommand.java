@@ -1,9 +1,16 @@
 package com.nel.onepiece.commands;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nel.onepiece.config.ConfigManager;
+import com.nel.onepiece.config.PresetLibraryManager;
 import com.nel.onepiece.model.config.AIProviderConfig;
 import com.nel.onepiece.model.config.AIProviderType;
 import com.nel.onepiece.model.config.VaultConfig;
+import com.nel.onepiece.model.presets.AgentPreset;
+import com.nel.onepiece.model.presets.McpPreset;
+import com.nel.onepiece.model.presets.PresetLibrary;
+import com.nel.onepiece.model.presets.SkillPreset;
 import com.nel.onepiece.security.VaultClient;
 import com.nel.onepiece.ui.ColorFormatter;
 import com.nel.onepiece.ui.InteractiveMenu;
@@ -13,6 +20,8 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -37,6 +46,9 @@ public class SettingsCommand implements Runnable {
 
     @Inject
     ConfigManager configManager;
+
+    @Inject
+    PresetLibraryManager presetLibraryManager;
 
     @Inject
     VaultClient vaultClient;
@@ -73,6 +85,7 @@ public class SettingsCommand implements Runnable {
 
     private enum SettingsMenuOption {
         AI_PROVIDER("🤖", "AI Provider Configuration"),
+        PRESETS("📚", "Presets Library"),
         UPDATE("🔄", "Update Vault configuration"),
         TEST("🧪", "Test connection"),
         SHOW("📋", "Show stored secrets (masked)"),
@@ -290,6 +303,9 @@ public class SettingsCommand implements Runnable {
             case AI_PROVIDER:
                 showAIProviderMenu();
                 break;
+            case PRESETS:
+                showPresetsLibraryMenu();
+                break;
             case UPDATE:
                 setupVault();
                 break;
@@ -305,6 +321,468 @@ public class SettingsCommand implements Runnable {
             case BACK:
                 // Return to main menu
                 break;
+        }
+    }
+
+    private enum PresetsMenuOption {
+        AGENTS("🧩", "Agents"),
+        SKILLS("🛠️", "Skills"),
+        MCP("🔌", "MCP Servers"),
+        EXPORT("📤", "Export templates"),
+        IMPORT("📥", "Import templates"),
+        BACK("🔙", "Back");
+
+        final String icon;
+        final String label;
+
+        PresetsMenuOption(String icon, String label) {
+            this.icon = icon;
+            this.label = label;
+        }
+    }
+
+    private void showPresetsLibraryMenu() {
+        while (true) {
+            formatter.println(formatter.section("📚 Presets Library"));
+            formatter.println("");
+            for (int i = 0; i < PresetsMenuOption.values().length; i++) {
+                PresetsMenuOption opt = PresetsMenuOption.values()[i];
+                formatter.println(String.format("  %d. %s %s", i + 1, opt.icon, opt.label));
+            }
+            formatter.println("");
+
+            String input = menu.promptInput("Select option (1-" + PresetsMenuOption.values().length + ")");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
+
+            int choice;
+            try {
+                choice = Integer.parseInt(input.trim());
+            } catch (NumberFormatException e) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                continue;
+            }
+
+            if (choice < 1 || choice > PresetsMenuOption.values().length) {
+                formatter.println(formatter.errorMessage("Invalid selection"));
+                continue;
+            }
+
+            PresetsMenuOption selected = PresetsMenuOption.values()[choice - 1];
+            formatter.println("");
+            switch (selected) {
+                case AGENTS -> manageAgentPresets();
+                case SKILLS -> manageSkillPresets();
+                case MCP -> manageMcpPresets();
+                case EXPORT -> exportPresetsTemplates();
+                case IMPORT -> importPresetsTemplates();
+                case BACK -> {
+                    return;
+                }
+            }
+
+            formatter.println("");
+        }
+    }
+
+    private void exportPresetsTemplates() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+        progress.startSpinner("Exporting templates");
+        try {
+            presetLibraryManager.exportTemplates(lib);
+            progress.success("Templates exported");
+        } catch (Exception e) {
+            progress.error("Export failed: " + e.getMessage());
+        }
+    }
+
+    private void importPresetsTemplates() {
+        boolean confirm = menu.promptConfirm("Import will overwrite presets.json. Continue?", false);
+        if (!confirm) {
+            return;
+        }
+
+        progress.startSpinner("Importing templates");
+        try {
+            presetLibraryManager.importTemplates();
+            progress.success("Templates imported");
+        } catch (Exception e) {
+            progress.error("Import failed: " + e.getMessage());
+        }
+    }
+
+    private enum ManageMenuOption {
+        LIST("📋", "List"),
+        ADD("➕", "Add"),
+        DELETE("🗑️", "Delete"),
+        BACK("🔙", "Back");
+
+        final String icon;
+        final String label;
+
+        ManageMenuOption(String icon, String label) {
+            this.icon = icon;
+            this.label = label;
+        }
+    }
+
+    private void manageAgentPresets() {
+        while (true) {
+            formatter.println(formatter.section("🧩 Agent Presets"));
+            formatter.println("");
+            for (int i = 0; i < ManageMenuOption.values().length; i++) {
+                ManageMenuOption opt = ManageMenuOption.values()[i];
+                formatter.println(String.format("  %d. %s %s", i + 1, opt.icon, opt.label));
+            }
+            formatter.println("");
+
+            String input = menu.promptInput("Select option (1-" + ManageMenuOption.values().length + ")");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
+
+            int choice;
+            try {
+                choice = Integer.parseInt(input.trim());
+            } catch (NumberFormatException e) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                continue;
+            }
+
+            if (choice < 1 || choice > ManageMenuOption.values().length) {
+                formatter.println(formatter.errorMessage("Invalid selection"));
+                continue;
+            }
+
+            ManageMenuOption selected = ManageMenuOption.values()[choice - 1];
+            switch (selected) {
+                case LIST -> listAgentPresets();
+                case ADD -> addAgentPreset();
+                case DELETE -> deleteAgentPreset();
+                case BACK -> {
+                    return;
+                }
+            }
+            formatter.println("");
+        }
+    }
+
+    private void listAgentPresets() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+        formatter.println(formatter.bold("Agents:"));
+        for (AgentPreset a : lib.getAgents()) {
+            formatter.println("  - " + a.getId() + " (" + a.getAgentType() + "): " + a.getDisplayName());
+        }
+    }
+
+    private void addAgentPreset() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+
+        String id = menu.promptInput("Agent id (slug)");
+        if (id == null || id.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("id is required"));
+            return;
+        }
+        String displayName = menu.promptInput("Display name");
+        if (displayName == null || displayName.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("displayName is required"));
+            return;
+        }
+        String description = menu.promptInput("Description (optional)");
+        String systemPrompt = menu.promptInput("System prompt");
+        if (systemPrompt == null || systemPrompt.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("systemPrompt is required"));
+            return;
+        }
+
+        AgentPreset preset = new AgentPreset();
+        preset.setId(id.trim());
+        preset.setAgentType("bob");
+        preset.setDisplayName(displayName.trim());
+        preset.setDescription(description != null ? description.trim() : "");
+        preset.setSystemPrompt(systemPrompt.trim());
+
+        AgentPreset.CustomMode mode = new AgentPreset.CustomMode();
+        mode.setSlug(id.trim());
+        mode.setName(displayName.trim());
+        String roleDefinition = menu.promptInput("Role definition (optional)");
+        String whenToUse = menu.promptInput("When to use (optional)");
+        mode.setRoleDefinition(roleDefinition != null && !roleDefinition.trim().isEmpty() ? roleDefinition.trim() : "Custom agent");
+        mode.setWhenToUse(whenToUse != null && !whenToUse.trim().isEmpty() ? whenToUse.trim() : "Use when you want this behavior.");
+        mode.setCustomInstructions(systemPrompt.trim());
+        mode.setGroups(List.of("read", "edit", "command", "mcp"));
+        preset.setCustomMode(mode);
+
+        presetLibraryManager.upsertAgent(lib, preset);
+        try {
+            presetLibraryManager.save(lib);
+            presetLibraryManager.exportTemplates(lib);
+            formatter.println(formatter.success("Saved"));
+        } catch (Exception e) {
+            formatter.println(formatter.errorMessage("Save failed: " + e.getMessage()));
+        }
+    }
+
+    private void deleteAgentPreset() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+        if (lib.getAgents().isEmpty()) {
+            formatter.println(formatter.warningMessage("No agents to delete"));
+            return;
+        }
+
+        for (int i = 0; i < lib.getAgents().size(); i++) {
+            AgentPreset a = lib.getAgents().get(i);
+            formatter.println(String.format("  %d. %s", i + 1, a.getId() + " - " + a.getDisplayName()));
+        }
+        String input = menu.promptInput("Select agent number to delete");
+        if (input == null) {
+            return;
+        }
+        try {
+            int idx = Integer.parseInt(input.trim());
+            if (idx < 1 || idx > lib.getAgents().size()) {
+                formatter.println(formatter.errorMessage("Invalid selection"));
+                return;
+            }
+            String id = lib.getAgents().get(idx - 1).getId();
+            presetLibraryManager.deleteAgent(lib, id);
+            presetLibraryManager.save(lib);
+            presetLibraryManager.exportTemplates(lib);
+            formatter.println(formatter.success("Deleted"));
+        } catch (Exception e) {
+            formatter.println(formatter.errorMessage("Delete failed: " + e.getMessage()));
+        }
+    }
+
+    private void manageSkillPresets() {
+        while (true) {
+            formatter.println(formatter.section("🛠️ Skill Presets"));
+            formatter.println("");
+            for (int i = 0; i < ManageMenuOption.values().length; i++) {
+                ManageMenuOption opt = ManageMenuOption.values()[i];
+                formatter.println(String.format("  %d. %s %s", i + 1, opt.icon, opt.label));
+            }
+            formatter.println("");
+
+            String input = menu.promptInput("Select option (1-" + ManageMenuOption.values().length + ")");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
+
+            int choice;
+            try {
+                choice = Integer.parseInt(input.trim());
+            } catch (NumberFormatException e) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                continue;
+            }
+
+            if (choice < 1 || choice > ManageMenuOption.values().length) {
+                formatter.println(formatter.errorMessage("Invalid selection"));
+                continue;
+            }
+
+            ManageMenuOption selected = ManageMenuOption.values()[choice - 1];
+            switch (selected) {
+                case LIST -> listSkillPresets();
+                case ADD -> addSkillPreset();
+                case DELETE -> deleteSkillPreset();
+                case BACK -> {
+                    return;
+                }
+            }
+            formatter.println("");
+        }
+    }
+
+    private void listSkillPresets() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+        formatter.println(formatter.bold("Skills:"));
+        for (SkillPreset s : lib.getSkills()) {
+            formatter.println("  - " + s.getSlug() + ": " + s.getName());
+        }
+    }
+
+    private void addSkillPreset() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+
+        String slug = menu.promptInput("Skill slug");
+        if (slug == null || slug.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("slug is required"));
+            return;
+        }
+        String name = menu.promptInput("Skill name");
+        if (name == null || name.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("name is required"));
+            return;
+        }
+        String description = menu.promptInput("Description (optional)");
+        String markdown = menu.promptInput("SKILL.md content (use \\n for new lines)");
+        if (markdown == null) {
+            markdown = "";
+        }
+        markdown = markdown.replace("\\n", "\n");
+
+        SkillPreset preset = new SkillPreset();
+        preset.setSlug(slug.trim());
+        preset.setName(name.trim());
+        preset.setDescription(description != null ? description.trim() : "");
+        preset.setSkillMarkdown(markdown);
+
+        presetLibraryManager.upsertSkill(lib, preset);
+        try {
+            presetLibraryManager.save(lib);
+            presetLibraryManager.exportTemplates(lib);
+            formatter.println(formatter.success("Saved"));
+        } catch (Exception e) {
+            formatter.println(formatter.errorMessage("Save failed: " + e.getMessage()));
+        }
+    }
+
+    private void deleteSkillPreset() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+        if (lib.getSkills().isEmpty()) {
+            formatter.println(formatter.warningMessage("No skills to delete"));
+            return;
+        }
+
+        for (int i = 0; i < lib.getSkills().size(); i++) {
+            SkillPreset s = lib.getSkills().get(i);
+            formatter.println(String.format("  %d. %s", i + 1, s.getSlug() + " - " + s.getName()));
+        }
+        String input = menu.promptInput("Select skill number to delete");
+        if (input == null) {
+            return;
+        }
+        try {
+            int idx = Integer.parseInt(input.trim());
+            if (idx < 1 || idx > lib.getSkills().size()) {
+                formatter.println(formatter.errorMessage("Invalid selection"));
+                return;
+            }
+            String slug = lib.getSkills().get(idx - 1).getSlug();
+            presetLibraryManager.deleteSkill(lib, slug);
+            presetLibraryManager.save(lib);
+            presetLibraryManager.exportTemplates(lib);
+            formatter.println(formatter.success("Deleted"));
+        } catch (Exception e) {
+            formatter.println(formatter.errorMessage("Delete failed: " + e.getMessage()));
+        }
+    }
+
+    private void manageMcpPresets() {
+        while (true) {
+            formatter.println(formatter.section("🔌 MCP Presets"));
+            formatter.println("");
+            for (int i = 0; i < ManageMenuOption.values().length; i++) {
+                ManageMenuOption opt = ManageMenuOption.values()[i];
+                formatter.println(String.format("  %d. %s %s", i + 1, opt.icon, opt.label));
+            }
+            formatter.println("");
+
+            String input = menu.promptInput("Select option (1-" + ManageMenuOption.values().length + ")");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
+
+            int choice;
+            try {
+                choice = Integer.parseInt(input.trim());
+            } catch (NumberFormatException e) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                continue;
+            }
+
+            if (choice < 1 || choice > ManageMenuOption.values().length) {
+                formatter.println(formatter.errorMessage("Invalid selection"));
+                continue;
+            }
+
+            ManageMenuOption selected = ManageMenuOption.values()[choice - 1];
+            switch (selected) {
+                case LIST -> listMcpPresets();
+                case ADD -> addMcpPreset();
+                case DELETE -> deleteMcpPreset();
+                case BACK -> {
+                    return;
+                }
+            }
+            formatter.println("");
+        }
+    }
+
+    private void listMcpPresets() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+        formatter.println(formatter.bold("MCP presets:"));
+        for (McpPreset m : lib.getMcps()) {
+            formatter.println("  - " + m.getName());
+        }
+    }
+
+    private void addMcpPreset() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+
+        String name = menu.promptInput("MCP preset name (e.g., github-mcp)");
+        if (name == null || name.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("name is required"));
+            return;
+        }
+
+        formatter.println("Paste MCP server JSON (single line).");
+        String json = menu.promptInput("server");
+        if (json == null || json.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("server JSON is required"));
+            return;
+        }
+
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            Map<String, Object> server = mapper.readValue(json, new TypeReference<LinkedHashMap<String, Object>>() {});
+            McpPreset preset = new McpPreset();
+            preset.setName(name.trim());
+            preset.setServer(server);
+            presetLibraryManager.upsertMcp(lib, preset);
+            presetLibraryManager.save(lib);
+            presetLibraryManager.exportTemplates(lib);
+            formatter.println(formatter.success("Saved"));
+        } catch (Exception e) {
+            formatter.println(formatter.errorMessage("Invalid JSON: " + e.getMessage()));
+        }
+    }
+
+    private void deleteMcpPreset() {
+        PresetLibrary lib = presetLibraryManager.loadOrCreate();
+        if (lib.getMcps().isEmpty()) {
+            formatter.println(formatter.warningMessage("No MCP presets to delete"));
+            return;
+        }
+
+        for (int i = 0; i < lib.getMcps().size(); i++) {
+            McpPreset m = lib.getMcps().get(i);
+            formatter.println(String.format("  %d. %s", i + 1, m.getName()));
+        }
+        String input = menu.promptInput("Select MCP preset number to delete");
+        if (input == null) {
+            return;
+        }
+        try {
+            int idx = Integer.parseInt(input.trim());
+            if (idx < 1 || idx > lib.getMcps().size()) {
+                formatter.println(formatter.errorMessage("Invalid selection"));
+                return;
+            }
+            String name = lib.getMcps().get(idx - 1).getName();
+            presetLibraryManager.deleteMcp(lib, name);
+            presetLibraryManager.save(lib);
+            presetLibraryManager.exportTemplates(lib);
+            formatter.println(formatter.success("Deleted"));
+        } catch (Exception e) {
+            formatter.println(formatter.errorMessage("Delete failed: " + e.getMessage()));
         }
     }
 

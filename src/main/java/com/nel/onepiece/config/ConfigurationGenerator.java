@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.nel.onepiece.model.BobWorkspaceConfig;
 import com.nel.onepiece.model.ProjectAnalysis;
+import com.nel.onepiece.model.presets.AgentPreset;
+import com.nel.onepiece.model.presets.SkillPreset;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import java.io.IOException;
@@ -356,6 +358,41 @@ customModes:
         Files.writeString(bobDir.resolve("custom_modes.yaml"), yaml);
     }
 
+    public void generateBobCustomModesFromPresets(String projectPath, List<AgentPreset.CustomMode> modes) throws IOException {
+        Path bobDir = Paths.get(projectPath, ".bob");
+        Files.createDirectories(bobDir);
+
+        StringBuilder yaml = new StringBuilder();
+        yaml.append("customModes:\n");
+
+        for (AgentPreset.CustomMode mode : modes) {
+            if (mode == null || mode.getSlug() == null || mode.getSlug().isBlank()) {
+                continue;
+            }
+
+            yaml.append("  - slug: ").append(mode.getSlug().trim()).append("\n");
+            yaml.append("    name: ").append(yamlQuote(mode.getName())).append("\n");
+            yaml.append("    roleDefinition: ").append(yamlQuote(mode.getRoleDefinition())).append("\n");
+            yaml.append("    whenToUse: ").append(yamlQuote(mode.getWhenToUse())).append("\n");
+            yaml.append("    customInstructions: ").append(yamlQuote(mode.getCustomInstructions())).append("\n");
+            yaml.append("    groups:\n");
+
+            List<String> groups = mode.getGroups() != null ? mode.getGroups() : List.of();
+            for (String g : groups) {
+                if (g == null || g.isBlank()) {
+                    continue;
+                }
+                yaml.append("      - ").append(g.trim()).append("\n");
+            }
+            if (groups.isEmpty()) {
+                yaml.append("      - read\n");
+            }
+            yaml.append("\n");
+        }
+
+        Files.writeString(bobDir.resolve("custom_modes.yaml"), yaml.toString());
+    }
+
     public void generateBobRules(String projectPath, String workflow, List<String> skills, List<String> mcps) throws IOException {
         Path rulesDir = Paths.get(projectPath, ".bob", "rules");
         Files.createDirectories(rulesDir);
@@ -384,6 +421,21 @@ customModes:
         );
 
         Files.writeString(rulesDir.resolve("01-workspace.md"), rules);
+    }
+
+    public void generateBobSkillsFromPresets(String projectPath, List<SkillPreset> skills) throws IOException {
+        Path skillsDir = Paths.get(projectPath, ".bob", "skills");
+        Files.createDirectories(skillsDir);
+
+        for (SkillPreset skill : skills) {
+            if (skill == null || skill.getSlug() == null || skill.getSlug().isBlank()) {
+                continue;
+            }
+            Path dir = skillsDir.resolve(skill.getSlug().trim());
+            Files.createDirectories(dir);
+            String content = skill.getSkillMarkdown() != null ? skill.getSkillMarkdown() : "";
+            Files.writeString(dir.resolve("SKILL.md"), content);
+        }
     }
 
     public void generateBobSkills(String projectPath, List<String> skills) throws IOException {
@@ -433,6 +485,14 @@ description: Gather up-to-date documentation and integration details for librari
 
             Files.writeString(dir.resolve("SKILL.md"), content);
         }
+    }
+
+    private String yamlQuote(String value) {
+        if (value == null) {
+            return "\"\"";
+        }
+        String v = value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
+        return "\"" + v + "\"";
     }
 }
 
