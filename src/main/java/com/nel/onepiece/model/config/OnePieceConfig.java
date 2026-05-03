@@ -17,6 +17,9 @@ public class OnePieceConfig {
     @JsonProperty("vault")
     private VaultConfig vault;
 
+    @JsonProperty("ibmCloud")
+    private IbmCloudConfig ibmCloud;
+
     public OnePieceConfig() {}
 
     // Getters and setters
@@ -44,6 +47,14 @@ public class OnePieceConfig {
         this.vault = vault;
     }
 
+    public IbmCloudConfig getIbmCloud() {
+        return ibmCloud;
+    }
+
+    public void setIbmCloud(IbmCloudConfig ibmCloud) {
+        this.ibmCloud = ibmCloud;
+    }
+
     /**
      * Check if AI provider is configured
      */
@@ -56,6 +67,10 @@ public class OnePieceConfig {
      */
     public boolean hasVault() {
         return vault != null && vault.isConfigured();
+    }
+
+    public boolean hasIbmCloud() {
+        return ibmCloud != null && ibmCloud.isConfigured();
     }
 }
 

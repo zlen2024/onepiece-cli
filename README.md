@@ -6,10 +6,10 @@ The Ultimate AI Environment Bootstrapper - A lightning-fast CLI tool for bootstr
 
 - **⚙️ Setup**: Bootstrap AI agent environments (IBM Bob, Claude Code, Open Code, Pi)
 - **🚀 Deploy**: Automate cloud deployments (IBM Cloud, Fly.io)
-- **🔐 Settings**: Secure credential management with HashiCorp Vault (BYOV)
+- **🔐 Settings**: Global credential management in `~/.onepiece/config.json`
 - **🎨 Beautiful TUI**: Interactive terminal UI with colored output and progress indicators
 - **⚡ Fast**: Built with Quarkus for supersonic startup times
-- **🔒 Secure**: Bring Your Own Vault (BYOV) approach for credential management
+- **🔒 Secure**: Local config permissions (`600` on Unix-like systems) + optional Vault integration
 
 ## 📋 Prerequisites
 
@@ -19,7 +19,7 @@ The Ultimate AI Environment Bootstrapper - A lightning-fast CLI tool for bootstr
 
 ### Optional
 - Maven 3.8+ (Maven wrapper `mvnw` is included)
-- HashiCorp Vault instance (can use local .env for POC)
+- HashiCorp Vault instance (optional)
 - IBM Cloud CLI (for deployment features)
 
 ### For Native Builds (Advanced Users Only)
@@ -148,7 +148,60 @@ java -jar target/quarkus-app/quarkus-run.jar setup --project-dir . --auto-detect
 
 Or use the interactive mode and select "Setup" from the menu.
 
-### Step 7: Running Tests
+### Step 7: IBM Cloud Deployment (Automated)
+
+One Piece deploys to IBM Cloud by driving the IBM Cloud CLI (`ibmcloud`) in the background. Before you run `deploy`, make sure IBM Cloud prerequisites are installed and your reusable credentials are saved in `~/.onepiece/config.json`.
+
+#### Requirements (IBM Cloud)
+
+- IBM Cloud account with access to **Code Engine**.
+- IBM Cloud API key.
+- IBM Cloud CLI installed and available on PATH:
+  - Docs: https://cloud.ibm.com/docs/cli
+- IBM Cloud **Code Engine** plugin installed:
+  - `ibmcloud plugin install code-engine`
+
+#### Setup Steps
+
+1. Install IBM Cloud CLI and verify:
+
+   ```bash
+   ibmcloud --version
+   ```
+
+2. Install Code Engine plugin and verify:
+
+   ```bash
+   ibmcloud plugin list
+   ```
+
+3. Save IBM Cloud credentials to global config:
+
+   **Windows**
+   ```cmd
+   java -jar target\quarkus-app\quarkus-run.jar settings --ibmcloud-api-key YOUR_KEY --ibmcloud-region us-south --ibmcloud-resource-group Default --ibmcloud-ce-project my-ce-project
+   ```
+
+   **Linux/macOS**
+   ```bash
+   java -jar target/quarkus-app/quarkus-run.jar settings --ibmcloud-api-key YOUR_KEY --ibmcloud-region us-south --ibmcloud-resource-group Default --ibmcloud-ce-project my-ce-project
+   ```
+
+4. Deploy:
+
+   **Windows**
+   ```cmd
+   java -jar target\quarkus-app\quarkus-run.jar deploy --target ibmcloud --project-dir . --app-name my-app
+   ```
+
+   **Linux/macOS**
+   ```bash
+   java -jar target/quarkus-app/quarkus-run.jar deploy --target ibmcloud --project-dir . --app-name my-app
+   ```
+
+During deploy, Code Engine builds and pushes the container image for you from local source code (no Docker required) using `ibmcloud ce application create --build-source .`. For more details, see: https://cloud.ibm.com/docs/codeengine?topic=codeengine-app-local-source-code
+
+### Step 8: Running Tests
 
 To ensure everything is working correctly:
 
@@ -164,7 +217,7 @@ mvnw.cmd test
 
 **Expected output**: All tests should pass (green checkmarks)
 
-### Step 8: Development Mode (Hot Reload)
+### Step 9: Development Mode (Hot Reload)
 
 For development, use Quarkus dev mode with hot reload:
 
@@ -224,7 +277,21 @@ chmod +x mvnw
 ./mvnw clean package
 ```
 
-#### Issue 5: Build fails with "Out of memory"
+#### Issue 5: "IBM Cloud CLI not found. Install it first to use deploy."
+**Problem**: Deploy fails because `ibmcloud` is not installed or not on PATH.
+
+**Solution**:
+1. Install IBM Cloud CLI: https://cloud.ibm.com/docs/cli
+2. Verify it is on PATH:
+   ```bash
+   ibmcloud --version
+   ```
+3. Install Code Engine plugin:
+   ```bash
+   ibmcloud plugin install code-engine
+   ```
+
+#### Issue 6: Build fails with "Out of memory"
 **Problem**: Maven runs out of memory during build.
 
 **Solution**: Increase Maven memory:
@@ -244,7 +311,7 @@ set MAVEN_OPTS=-Xmx2048m
 export MAVEN_OPTS="-Xmx2048m"
 ```
 
-#### Issue 6: Tests fail
+#### Issue 7: Tests fail
 **Problem**: Unit tests fail during build.
 
 **Solution**:
@@ -256,7 +323,7 @@ export MAVEN_OPTS="-Xmx2048m"
 3. Check if ports 8080-8081 are available
 4. Verify OpenAI API key is configured
 
-#### Issue 7: "Cannot find native-image.cmd" (Native Build)
+#### Issue 8: "Cannot find native-image.cmd" (Native Build)
 **Problem**: Attempting native build without GraalVM.
 
 **Solution**: Native builds are optional and require additional setup. For most users, **JVM mode is recommended**. If you need native builds, see the "Advanced: Native Compilation" section below.
@@ -587,7 +654,7 @@ java -jar target/quarkus-app/quarkus-run.jar deploy [OPTIONS]
 - `--no-interactive` - Skip interactive prompts
 
 **What it does:**
-1. Fetches credentials securely from Vault
+1. Loads reusable credentials from `~/.onepiece/config.json`
 2. Builds your application
 3. Deploys to the selected cloud provider
 4. Streams deployment logs in real-time
@@ -652,14 +719,13 @@ src/main/java/com/nel/onepiece/
 
 ## 🔐 Security
 
-One Piece CLI follows a **Bring Your Own Vault (BYOV)** approach:
+One Piece CLI stores reusable credentials in `~/.onepiece/config.json`:
 
-1. You provide your own HashiCorp Vault instance
-2. CLI stores only the Vault URL and token locally
-3. All credentials are fetched from Vault at runtime
-4. No secrets are hardcoded or permanently stored
+1. Credentials are stored locally (plain text)
+2. File permissions are set to user read/write only (`600`) on Unix-like systems
+3. No `.env` / `.env.example` files are generated by the CLI
 
-For POC/development, you can use a local `.env` file (not recommended for production).
+HashiCorp Vault configuration is supported as an optional advanced feature.
 
 ## 🎨 UI Features
 

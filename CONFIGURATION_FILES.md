@@ -15,7 +15,6 @@ project-root/
 │   ├── mcp-registry.json      # MCP server registry
 │   ├── skills-config.json     # Skills library configuration
 │   └── deployment.json        # Deployment configuration
-└── .env.example               # Environment variables template
 ```
 
 ---
@@ -1015,42 +1014,7 @@ public class BobWorkspaceValidator {
 
 ---
 
-## 7. .env.example (Environment Variables Template)
-
-```bash
-# One Piece CLI Environment Variables
-
-# AI Provider Configuration
-OPENAI_API_KEY=sk-...
-# OR
-WATSONX_API_KEY=...
-WATSONX_PROJECT_ID=...
-
-# HashiCorp Vault (if using BYOV)
-VAULT_URL=https://vault.example.com
-VAULT_TOKEN=hvs....
-
-# GitHub Integration
-GITHUB_TOKEN=ghp_...
-
-# Database Configuration
-DATABASE_URL=postgresql://user:password@localhost:5432/dbname
-REDIS_URL=redis://localhost:6379
-
-# IBM Cloud Deployment
-IBM_CLOUD_API_KEY=...
-IBM_CLOUD_REGION=us-south
-
-# Maven Configuration (if needed)
-MAVEN_HOME=/usr/local/maven
-
-# Optional: Custom MCP Configurations
-CUSTOM_MCP_PATH=/path/to/custom/mcps
-```
-
----
-
-## 8. Configuration File Management Service
+## 7. Configuration File Management Service
 
 ### 8.1 Configuration Manager Implementation
 
@@ -1098,19 +1062,6 @@ public class ConfigurationManager {
         
         Path projectPath = onepieceDir.resolve("project.json");
         writeJson(projectPath, metadata);
-    }
-    
-    public void generateEnvTemplate(Path projectDir, List<String> requiredEnvVars) {
-        Path envPath = projectDir.resolve(".env.example");
-        
-        StringBuilder content = new StringBuilder();
-        content.append("# One Piece CLI Environment Variables\n\n");
-        
-        for (String envVar : requiredEnvVars) {
-            content.append(envVar).append("=\n");
-        }
-        
-        Files.writeString(envPath, content.toString());
     }
     
     private void writeJson(Path path, Object config) {

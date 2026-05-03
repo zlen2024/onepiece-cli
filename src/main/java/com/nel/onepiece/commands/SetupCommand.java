@@ -507,7 +507,6 @@ public class SetupCommand implements Runnable {
             }
             configurationGenerator.generateMcpRegistry(projectPath.toString(), analysisForConfig);
             configurationGenerator.generateProjectMetadata(projectPath.toString(), analysisForConfig, agent.name().toLowerCase());
-            configurationGenerator.generateEnvExample(projectPath.toString(), analysisForConfig);
         } catch (Exception e) {
             formatter.println("");
             formatter.println(formatter.errorMessage("Failed to write configuration files: " + e.getMessage()));
@@ -527,7 +526,6 @@ public class SetupCommand implements Runnable {
         }
         formatter.println(formatter.successMessage("   • .onepiece/mcp-registry.json (MCP server list)"));
         formatter.println(formatter.successMessage("   • .onepiece/project.json (project metadata)"));
-        formatter.println(formatter.successMessage("   • .env.example (environment template)"));
         formatter.println("");
         
         formatter.println(formatter.bold("🚀 Next steps:"));
@@ -933,7 +931,6 @@ public class SetupCommand implements Runnable {
 
             configurationGenerator.generateMcpRegistry(projectPath.toString(), analysisForConfig);
             configurationGenerator.generateProjectMetadata(projectPath.toString(), analysisForConfig, "bob");
-            configurationGenerator.generateEnvExample(projectPath.toString(), analysisForConfig);
 
             progress.success("Bob configuration generated");
         } catch (Exception e) {
@@ -953,7 +950,6 @@ public class SetupCommand implements Runnable {
         formatter.println(formatter.successMessage("   • .bob/skills/**/SKILL.md (if selected)"));
         formatter.println(formatter.successMessage("   • .onepiece/mcp-registry.json"));
         formatter.println(formatter.successMessage("   • .onepiece/project.json"));
-        formatter.println(formatter.successMessage("   • .env.example"));
         return true;
     }
 

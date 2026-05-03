@@ -6,6 +6,7 @@ import com.nel.onepiece.config.ConfigManager;
 import com.nel.onepiece.config.PresetLibraryManager;
 import com.nel.onepiece.model.config.AIProviderConfig;
 import com.nel.onepiece.model.config.AIProviderType;
+import com.nel.onepiece.model.config.IbmCloudConfig;
 import com.nel.onepiece.model.config.VaultConfig;
 import com.nel.onepiece.model.presets.AgentPreset;
 import com.nel.onepiece.model.presets.McpPreset;
@@ -83,8 +84,45 @@ public class SettingsCommand implements Runnable {
     )
     boolean nonInteractive;
 
+    @Option(
+        names = {"--ibmcloud-api-key"},
+        description = "IBM Cloud API key (stored in ~/.onepiece/config.json)"
+    )
+    String ibmCloudApiKey;
+
+    @Option(
+        names = {"--ibmcloud-region"},
+        description = "Default IBM Cloud region (stored in ~/.onepiece/config.json)"
+    )
+    String ibmCloudRegion;
+
+    @Option(
+        names = {"--ibmcloud-org"},
+        description = "Default IBM Cloud Cloud Foundry org (stored in ~/.onepiece/config.json)"
+    )
+    String ibmCloudOrg;
+
+    @Option(
+        names = {"--ibmcloud-space"},
+        description = "Default IBM Cloud Cloud Foundry space (stored in ~/.onepiece/config.json)"
+    )
+    String ibmCloudSpace;
+
+    @Option(
+        names = {"--ibmcloud-resource-group"},
+        description = "Default IBM Cloud resource group (stored in ~/.onepiece/config.json)"
+    )
+    String ibmCloudResourceGroup;
+
+    @Option(
+        names = {"--ibmcloud-ce-project"},
+        description = "Default IBM Cloud Code Engine project (stored in ~/.onepiece/config.json)"
+    )
+    String ibmCloudCodeEngineProject;
+
     private enum SettingsMenuOption {
         AI_PROVIDER("🤖", "AI Provider Configuration"),
+        DEPLOYMENT_CONFIG("☁️", "Deployment Config"),
         PRESETS("📚", "Presets Library"),
         UPDATE("🔄", "Update Vault configuration"),
         TEST("🧪", "Test connection"),
@@ -116,6 +154,20 @@ public class SettingsCommand implements Runnable {
         }
     }
 
+    private enum DeploymentConfigMenuOption {
+        IBM_CLOUD("☁️", "IBM Cloud (Code Engine)"),
+        FLYIO("🪰", "Fly.io (Coming soon)"),
+        BACK("🔙", "Back");
+
+        final String icon;
+        final String label;
+
+        DeploymentConfigMenuOption(String icon, String label) {
+            this.icon = icon;
+            this.label = label;
+        }
+    }
+
     @Override
     public void run() {
         formatter.println("");
@@ -138,6 +190,18 @@ public class SettingsCommand implements Runnable {
             return;
         }
 
+        if (ibmCloudApiKey != null) {
+            configureIbmCloud(
+                ibmCloudApiKey,
+                ibmCloudRegion,
+                ibmCloudOrg,
+                ibmCloudSpace,
+                ibmCloudResourceGroup,
+                ibmCloudCodeEngineProject
+            );
+            return;
+        }
+
         // Always show the settings menu in interactive mode
         // Users can choose what to configure from the menu
         showSettingsMenu();
@@ -145,28 +209,6 @@ public class SettingsCommand implements Runnable {
 
     private boolean checkVaultConfiguration() {
         return configManager.hasVault();
-    }
-
-    private void showInitialSetup() {
-        formatter.println(formatter.warningMessage("No Vault configuration found"));
-        formatter.println("");
-        formatter.println("One Piece CLI uses HashiCorp Vault to securely manage your cloud credentials.");
-        formatter.println("This follows a \"Bring Your Own Vault\" (BYOV) approach.");
-        formatter.println("");
-
-        if (nonInteractive) {
-            formatter.println(formatter.errorMessage("Vault configuration required. Use --vault-url and --vault-token options."));
-            return;
-        }
-
-        boolean hasVault = menu.promptConfirm("Do you have a HashiCorp Vault instance?", true);
-        formatter.println("");
-
-        if (hasVault) {
-            setupVault();
-        } else {
-            showLocalEnvOption();
-        }
     }
 
     private void setupVault() {
@@ -227,26 +269,6 @@ public class SettingsCommand implements Runnable {
         }
     }
 
-    private void showLocalEnvOption() {
-        formatter.println(formatter.info("ℹ️  Alternative: Local .env file (Not recommended for production)"));
-        formatter.println("");
-        formatter.println("For POC purposes, you can store credentials locally.");
-        formatter.println(formatter.warningMessage("⚠️  Warning: Credentials will be stored in plain text"));
-        formatter.println("");
-
-        boolean useLocal = menu.promptConfirm("Use local .env file instead?", false);
-        
-        if (useLocal) {
-            formatter.println("");
-            formatter.println(formatter.info("Creating .env.example file..."));
-            formatter.println("");
-            formatter.println("Please create a .env file with your credentials:");
-            formatter.println(formatter.muted("  IBM_CLOUD_API_KEY=your-api-key-here"));
-            formatter.println(formatter.muted("  IBM_CLOUD_REGION=us-south"));
-            formatter.println("");
-        }
-    }
-
     private void showSettingsMenu() {
         formatter.println(formatter.bold("Current Configuration:"));
         
@@ -265,6 +287,18 @@ public class SettingsCommand implements Runnable {
         } else {
             formatter.println(formatter.muted("   Vault: Not configured"));
         }
+
+        // Show IBM Cloud status
+        IbmCloudConfig ibmCloud = configManager.getIbmCloudConfig();
+        if (ibmCloud != null && ibmCloud.isConfigured()) {
+            String regionInfo = ibmCloud.getRegion() != null && !ibmCloud.getRegion().isBlank()
+                ? " (" + ibmCloud.getRegion().trim() + ")"
+                : "";
+            formatter.println(formatter.info("   Deployment (IBM Cloud): Configured" + regionInfo));
+        } else {
+            formatter.println(formatter.muted("   Deployment (IBM Cloud): Not configured"));
+        }
+        formatter.println(formatter.muted("   Deployment (Fly.io): Not configured"));
         formatter.println("");
 
         if (nonInteractive) {
@@ -302,6 +336,9 @@ public class SettingsCommand implements Runnable {
         switch (option) {
             case AI_PROVIDER:
                 showAIProviderMenu();
+                break;
+            case DEPLOYMENT_CONFIG:
+                showDeploymentConfigMenu();
                 break;
             case PRESETS:
                 showPresetsLibraryMenu();
@@ -1125,6 +1162,127 @@ public class SettingsCommand implements Runnable {
         formatter.println("");
     }
 
+    private void showIbmCloudMenu() {
+        formatter.println(formatter.section("☁️ IBM Cloud Deployment Credentials"));
+        formatter.println("");
+
+        IbmCloudConfig current = configManager.getIbmCloudConfig();
+        if (current != null && current.isConfigured()) {
+            formatter.println(formatter.info("Current:"));
+            formatter.println("   API Key: " + current.getMaskedApiKey());
+            if (current.getResourceGroup() != null && !current.getResourceGroup().isBlank()) {
+                formatter.println("   Resource group: " + current.getResourceGroup().trim());
+            }
+            if (current.getCodeEngineProject() != null && !current.getCodeEngineProject().isBlank()) {
+                formatter.println("   Code Engine project: " + current.getCodeEngineProject().trim());
+            }
+            if (current.getRegion() != null && !current.getRegion().isBlank()) {
+                formatter.println("   Region: " + current.getRegion().trim());
+            }
+            if (current.getOrg() != null && !current.getOrg().isBlank()) {
+                formatter.println("   Org: " + current.getOrg().trim());
+            }
+            if (current.getSpace() != null && !current.getSpace().isBlank()) {
+                formatter.println("   Space: " + current.getSpace().trim());
+            }
+            formatter.println("");
+        }
+
+        if (nonInteractive) {
+            return;
+        }
+
+        String apiKey = menu.promptInput("Enter your IBM Cloud API key");
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("IBM Cloud API key is required"));
+            return;
+        }
+
+        String resourceGroup = menu.promptInput("Default resource group (press Enter to skip)");
+        String ceProject = menu.promptInput("Default Code Engine project (press Enter to skip)");
+        String region = menu.promptInput("Default region (press Enter to skip)");
+        String org = menu.promptInput("Default Cloud Foundry org (press Enter to skip)");
+        String space = menu.promptInput("Default Cloud Foundry space (press Enter to skip)");
+
+        configureIbmCloud(apiKey, region, org, space, resourceGroup, ceProject);
+    }
+
+    private void showDeploymentConfigMenu() {
+        while (true) {
+            formatter.println(formatter.section("☁️ Deployment Config"));
+            formatter.println("");
+
+            for (int i = 0; i < DeploymentConfigMenuOption.values().length; i++) {
+                DeploymentConfigMenuOption opt = DeploymentConfigMenuOption.values()[i];
+                formatter.println(String.format("  %d. %s %s", i + 1, opt.icon, opt.label));
+            }
+
+            formatter.println("");
+            String input = menu.promptInput("Select option (1-" + DeploymentConfigMenuOption.values().length + ")");
+            if (input == null) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                return;
+            }
+
+            int choice;
+            try {
+                choice = Integer.parseInt(input.trim());
+            } catch (NumberFormatException e) {
+                formatter.println(formatter.errorMessage("Invalid input"));
+                continue;
+            }
+
+            if (choice < 1 || choice > DeploymentConfigMenuOption.values().length) {
+                formatter.println(formatter.errorMessage("Invalid selection"));
+                continue;
+            }
+
+            DeploymentConfigMenuOption selected = DeploymentConfigMenuOption.values()[choice - 1];
+            formatter.println("");
+            switch (selected) {
+                case IBM_CLOUD -> showIbmCloudMenu();
+                case FLYIO -> formatter.println(formatter.warningMessage("Fly.io deployment config is not implemented yet."));
+                case BACK -> {
+                    return;
+                }
+            }
+
+            formatter.println("");
+        }
+    }
+
+    private void configureIbmCloud(String apiKey, String region, String org, String space, String resourceGroup, String codeEngineProject) {
+        progress.loading("💾 Saving configuration to ~/.onepiece/config.json");
+        try {
+            String normalizedApiKey = apiKey.trim();
+            String normalizedRegion = region != null && !region.trim().isEmpty() ? region.trim() : null;
+            String normalizedOrg = org != null && !org.trim().isEmpty() ? org.trim() : null;
+            String normalizedSpace = space != null && !space.trim().isEmpty() ? space.trim() : null;
+            String normalizedResourceGroup = resourceGroup != null && !resourceGroup.trim().isEmpty() ? resourceGroup.trim() : null;
+            String normalizedCeProject = codeEngineProject != null && !codeEngineProject.trim().isEmpty() ? codeEngineProject.trim() : null;
+
+            configManager.updateIbmCloudConfig(
+                new IbmCloudConfig(
+                    normalizedApiKey,
+                    normalizedRegion,
+                    normalizedOrg,
+                    normalizedSpace,
+                    normalizedResourceGroup,
+                    normalizedCeProject
+                )
+            );
+        } catch (Exception e) {
+            formatter.println("");
+            formatter.println(formatter.errorMessage("Failed to save configuration: " + e.getMessage()));
+            formatter.println("");
+            return;
+        }
+
+        formatter.println("");
+        formatter.println(formatter.success("✅ IBM Cloud credentials saved successfully!"));
+        formatter.println("");
+    }
+
     private void showConfiguration() {
         formatter.println(formatter.bold("Current Configuration:"));
         formatter.println("");
@@ -1144,6 +1302,31 @@ public class SettingsCommand implements Runnable {
         if (configManager.hasVault()) {
             formatter.println("   URL: " + configManager.getVaultConfig().getUrl());
             formatter.println("   Token: " + configManager.getVaultConfig().getMaskedToken());
+            formatter.println("   Status: Configured");
+        } else {
+            formatter.println("   Status: Not configured");
+        }
+        formatter.println("");
+
+        IbmCloudConfig ibmCloud = configManager.getIbmCloudConfig();
+        formatter.println(formatter.info("IBM Cloud Settings:"));
+        if (ibmCloud != null && ibmCloud.isConfigured()) {
+            formatter.println("   API Key: " + ibmCloud.getMaskedApiKey());
+            if (ibmCloud.getResourceGroup() != null && !ibmCloud.getResourceGroup().isBlank()) {
+                formatter.println("   Resource group: " + ibmCloud.getResourceGroup().trim());
+            }
+            if (ibmCloud.getCodeEngineProject() != null && !ibmCloud.getCodeEngineProject().isBlank()) {
+                formatter.println("   Code Engine project: " + ibmCloud.getCodeEngineProject().trim());
+            }
+            if (ibmCloud.getRegion() != null && !ibmCloud.getRegion().isBlank()) {
+                formatter.println("   Region: " + ibmCloud.getRegion().trim());
+            }
+            if (ibmCloud.getOrg() != null && !ibmCloud.getOrg().isBlank()) {
+                formatter.println("   Org: " + ibmCloud.getOrg().trim());
+            }
+            if (ibmCloud.getSpace() != null && !ibmCloud.getSpace().isBlank()) {
+                formatter.println("   Space: " + ibmCloud.getSpace().trim());
+            }
             formatter.println("   Status: Configured");
         } else {
             formatter.println("   Status: Not configured");

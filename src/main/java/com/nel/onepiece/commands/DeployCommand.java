@@ -4,8 +4,7 @@ import com.nel.onepiece.ai.ProjectAnalyzerService;
 import com.nel.onepiece.config.ConfigManager;
 import com.nel.onepiece.deployment.IbmCloudExecutor;
 import com.nel.onepiece.model.ProjectAnalysis;
-import com.nel.onepiece.model.config.VaultConfig;
-import com.nel.onepiece.security.VaultClient;
+import com.nel.onepiece.model.config.IbmCloudConfig;
 import com.nel.onepiece.ui.ColorFormatter;
 import com.nel.onepiece.ui.InteractiveMenu;
 import com.nel.onepiece.ui.ProgressIndicator;
@@ -41,9 +40,6 @@ public class DeployCommand implements Runnable {
     ConfigManager configManager;
 
     @Inject
-    VaultClient vaultClient;
-
-    @Inject
     IbmCloudExecutor ibmCloudExecutor;
 
     @Inject
@@ -58,7 +54,7 @@ public class DeployCommand implements Runnable {
     @Option(
         names = {"--region"},
         description = "Cloud region",
-        defaultValue = "us-south"
+        defaultValue = ""
     )
     String region;
 
@@ -155,7 +151,7 @@ public class DeployCommand implements Runnable {
             effectiveProjectDir = ".";
         }
         if (region == null || region.isBlank()) {
-            region = "us-south";
+            region = null;
         }
 
         Path projectPath = Paths.get(effectiveProjectDir).toAbsolutePath().normalize();
@@ -177,8 +173,69 @@ public class DeployCommand implements Runnable {
             appName = "my-app";
         }
 
+        IbmCloudConfig ibmCloudConfig = configManager.getIbmCloudConfig();
+        if (ibmCloudConfig == null || !ibmCloudConfig.isConfigured()) {
+            if (nonInteractive) {
+                formatter.println(formatter.errorMessage("IBM Cloud credentials not configured. Run 'onepiece settings' to set IBM Cloud API key."));
+                return;
+            }
+
+            formatter.println(formatter.warningMessage("IBM Cloud credentials not configured."));
+            boolean configureNow = menu.promptConfirm("Configure deployment credentials now?", true);
+            formatter.println("");
+            if (!configureNow) {
+                formatter.println(formatter.muted("Run 'onepiece settings' later to configure deployment credentials."));
+                return;
+            }
+
+            String apiKeyInput = menu.promptInput("Enter your IBM Cloud API key");
+            if (apiKeyInput == null || apiKeyInput.trim().isEmpty()) {
+                formatter.println(formatter.errorMessage("IBM Cloud API key is required"));
+                return;
+            }
+
+            String rgInput = menu.promptInput("Default resource group (default: Default)");
+            if (rgInput != null && rgInput.trim().isEmpty()) {
+                rgInput = null;
+            }
+            String ceProjectInput = menu.promptInput("Code Engine project name (default: onepiece)");
+            if (ceProjectInput != null && ceProjectInput.trim().isEmpty()) {
+                ceProjectInput = null;
+            }
+            String regionInput = menu.promptInput("Default region (default: us-south)");
+            if (regionInput != null && regionInput.trim().isEmpty()) {
+                regionInput = null;
+            }
+
+            String normalizedRg = (rgInput == null || rgInput.isBlank()) ? "Default" : rgInput.trim();
+            String normalizedCeProject = (ceProjectInput == null || ceProjectInput.isBlank()) ? "onepiece" : ceProjectInput.trim();
+            String normalizedRegion = (regionInput == null || regionInput.isBlank()) ? "us-south" : regionInput.trim();
+
+            progress.loading("💾 Saving configuration to ~/.onepiece/config.json");
+            try {
+                configManager.updateIbmCloudConfig(new IbmCloudConfig(apiKeyInput.trim(), normalizedRegion, null, null, normalizedRg, normalizedCeProject));
+                ibmCloudConfig = configManager.getIbmCloudConfig();
+            } catch (Exception e) {
+                formatter.println("");
+                formatter.println(formatter.errorMessage("Failed to save configuration: " + e.getMessage()));
+                formatter.println("");
+                return;
+            }
+
+            formatter.println("");
+        }
+
+        String apiKey = ibmCloudConfig.getApiKey();
+        String finalRegion = region;
+        if (finalRegion == null || finalRegion.isBlank()) {
+            String configRegion = ibmCloudConfig.getRegion();
+            finalRegion = (configRegion != null && !configRegion.isBlank()) ? configRegion.trim() : "us-south";
+        }
+        String resourceGroup = ibmCloudConfig.getResourceGroup();
+        String codeEngineProject = ibmCloudConfig.getCodeEngineProject();
+
         formatter.println(formatter.info("App name: " + appName));
-        formatter.println(formatter.info("Region: " + region));
+        formatter.println(formatter.info("Region: " + finalRegion));
         formatter.println(formatter.info("Project: " + projectPath));
         formatter.println("");
 
@@ -193,39 +250,9 @@ public class DeployCommand implements Runnable {
             return;
         }
 
-        String apiKey = null;
-        String finalRegion = region;
-        String org = null;
-        String space = null;
-
-        if (configManager.hasVault()) {
-            VaultConfig vaultConfig = configManager.getVaultConfig();
-            progress.startSpinner("Fetching IBM Cloud credentials from Vault");
-            try {
-                VaultClient.IbmCloudCredentials creds = vaultClient.getIbmCloudCredentials(vaultConfig.getUrl(), vaultConfig.getToken());
-                apiKey = creds.apiKey();
-                if (creds.region() != null && !creds.region().isBlank()) {
-                    finalRegion = creds.region();
-                }
-                org = creds.org();
-                space = creds.space();
-                progress.success("Credentials retrieved");
-            } catch (Exception e) {
-                progress.error("Failed to fetch credentials from Vault");
-                formatter.println(formatter.muted(e.getMessage()));
-                return;
-            }
-            formatter.println("");
-        } else {
-            apiKey = System.getenv("IBM_CLOUD_API_KEY");
-            String envRegion = System.getenv("IBM_CLOUD_REGION");
-            if (envRegion != null && !envRegion.isBlank()) {
-                finalRegion = envRegion;
-            }
-        }
-
-        if (apiKey == null || apiKey.isBlank()) {
-            formatter.println(formatter.errorMessage("IBM Cloud API key not found. Configure Vault or set IBM_CLOUD_API_KEY."));
+        if (!ibmCloudExecutor.isPluginInstalled("code-engine")) {
+            formatter.println(formatter.errorMessage("IBM Cloud Code Engine plugin not found. Install it first to use deploy."));
+            formatter.println(formatter.muted("ibmcloud plugin install code-engine"));
             return;
         }
 
@@ -243,20 +270,39 @@ public class DeployCommand implements Runnable {
             return;
         }
 
-        if ((org != null && !org.isBlank()) || (space != null && !space.isBlank())) {
-            progress.startSpinner("Targeting Cloud Foundry org/space");
+        if (resourceGroup != null && !resourceGroup.isBlank()) {
+            progress.startSpinner("Targeting resource group");
             try {
-                boolean targeted = ibmCloudExecutor.targetCf(org, space);
+                boolean targeted = ibmCloudExecutor.targetResourceGroup(resourceGroup);
                 if (!targeted) {
-                    progress.error("Targeting Cloud Foundry failed");
+                    progress.error("Targeting resource group failed");
                     return;
                 }
-                progress.success("Cloud Foundry target set");
+                progress.success("Resource group target set");
             } catch (Exception e) {
-                progress.error("Targeting Cloud Foundry failed");
+                progress.error("Targeting resource group failed");
                 formatter.println(formatter.muted(e.getMessage()));
                 return;
             }
+        }
+
+        if (codeEngineProject == null || codeEngineProject.isBlank()) {
+            formatter.println(formatter.errorMessage("Code Engine project is not configured. Run 'onepiece settings' to set --ibmcloud-ce-project."));
+            return;
+        }
+
+        progress.startSpinner("Preparing Code Engine project");
+        try {
+            boolean ok = ibmCloudExecutor.ensureCodeEngineProject(codeEngineProject);
+            if (!ok) {
+                progress.error("Failed to prepare Code Engine project");
+                return;
+            }
+            progress.success("Code Engine project ready: " + codeEngineProject.trim());
+        } catch (Exception e) {
+            progress.error("Failed to prepare Code Engine project");
+            formatter.println(formatter.muted(e.getMessage()));
+            return;
         }
 
         ProjectAnalysis analysis;
@@ -270,34 +316,15 @@ public class DeployCommand implements Runnable {
             return;
         }
 
-        String buildTool = analysis.getBuildTool() != null ? analysis.getBuildTool() : "Maven";
-        String buildpack = ibmCloudExecutor.detectBuildpack(analysis.getFramework() != null ? analysis.getFramework() : "java");
+        progress.startSpinner("Deploying to IBM Cloud (Code Engine)");
         try {
-            ibmCloudExecutor.generateManifest(projectPath.toString(), appName, buildpack, 512, 1);
-        } catch (Exception e) {
-            formatter.println(formatter.warningMessage("Failed to generate manifest.yml"));
-        }
-
-        progress.startSpinner("Building application (" + buildTool + ")");
-        try {
-            boolean built = ibmCloudExecutor.buildApplication(projectPath.toString(), buildTool);
-            if (!built) {
-                progress.error("Build failed");
-                return;
-            }
-            progress.success("Build successful");
-        } catch (Exception e) {
-            progress.error("Build failed");
-            formatter.println(formatter.muted(e.getMessage()));
-            return;
-        }
-
-        progress.startSpinner("Deploying to IBM Cloud (Cloud Foundry)");
-        try {
-            boolean pushed = ibmCloudExecutor.pushApplication(appName, projectPath.toString());
-            if (!pushed) {
-                progress.error("Deploy failed");
-                return;
+            IbmCloudExecutor.CommandResult created = ibmCloudExecutor.createCodeEngineAppFromLocalSource(appName, projectPath.toString());
+            if (!created.isSuccess()) {
+                IbmCloudExecutor.CommandResult updated = ibmCloudExecutor.updateCodeEngineAppFromLocalSource(appName, projectPath.toString());
+                if (!updated.isSuccess()) {
+                    progress.error("Deploy failed");
+                    return;
+                }
             }
             progress.success("Deploy complete");
         } catch (Exception e) {
@@ -308,22 +335,23 @@ public class DeployCommand implements Runnable {
 
         String status;
         try {
-            status = ibmCloudExecutor.getAppStatus(appName);
+            status = ibmCloudExecutor.getCodeEngineApp(appName);
         } catch (Exception e) {
             status = null;
         }
 
-        // Step 4: Show completion
         formatter.println(formatter.success("✅ Deployment Complete!"));
         formatter.println("");
-        
-        String appUrl = String.format("https://%s.%s.cf.appdomain.cloud", appName, finalRegion);
-        formatter.println(formatter.bold("🌐 Your app is live at:"));
-        formatter.println(formatter.highlight("   " + appUrl));
-        formatter.println("");
+
+        String liveUrl = ibmCloudExecutor.extractFirstUrl(status);
+        if (liveUrl != null) {
+            formatter.println(formatter.bold("🌐 Your app is live at:"));
+            formatter.println(formatter.highlight("   " + liveUrl));
+            formatter.println("");
+        }
         
         if (status != null && !status.isBlank()) {
-            formatter.println(formatter.bold("📊 ibmcloud cf app output:"));
+            formatter.println(formatter.bold("📊 ibmcloud ce application get output:"));
             formatter.println(formatter.separator());
             formatter.println(status.trim());
             formatter.println(formatter.separator());
