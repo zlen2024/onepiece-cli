@@ -4,8 +4,7 @@ import com.nel.onepiece.ai.ProjectAnalyzerService;
 import com.nel.onepiece.config.ConfigManager;
 import com.nel.onepiece.deployment.IbmCloudExecutor;
 import com.nel.onepiece.model.ProjectAnalysis;
-import com.nel.onepiece.model.config.VaultConfig;
-import com.nel.onepiece.security.VaultClient;
+import com.nel.onepiece.model.config.IbmCloudConfig;
 import com.nel.onepiece.ui.ColorFormatter;
 import com.nel.onepiece.ui.InteractiveMenu;
 import com.nel.onepiece.ui.ProgressIndicator;
@@ -41,9 +40,6 @@ public class DeployCommand implements Runnable {
     ConfigManager configManager;
 
     @Inject
-    VaultClient vaultClient;
-
-    @Inject
     IbmCloudExecutor ibmCloudExecutor;
 
     @Inject
@@ -58,7 +54,7 @@ public class DeployCommand implements Runnable {
     @Option(
         names = {"--region"},
         description = "Cloud region",
-        defaultValue = "us-south"
+        defaultValue = ""
     )
     String region;
 
@@ -155,7 +151,7 @@ public class DeployCommand implements Runnable {
             effectiveProjectDir = ".";
         }
         if (region == null || region.isBlank()) {
-            region = "us-south";
+            region = null;
         }
 
         Path projectPath = Paths.get(effectiveProjectDir).toAbsolutePath().normalize();
@@ -177,8 +173,23 @@ public class DeployCommand implements Runnable {
             appName = "my-app";
         }
 
+        IbmCloudConfig ibmCloudConfig = configManager.getIbmCloudConfig();
+        if (ibmCloudConfig == null || !ibmCloudConfig.isConfigured()) {
+            formatter.println(formatter.errorMessage("IBM Cloud credentials not configured. Run 'onepiece settings' to set IBM Cloud API key."));
+            return;
+        }
+
+        String apiKey = ibmCloudConfig.getApiKey();
+        String finalRegion = region;
+        if (finalRegion == null || finalRegion.isBlank()) {
+            String configRegion = ibmCloudConfig.getRegion();
+            finalRegion = (configRegion != null && !configRegion.isBlank()) ? configRegion.trim() : "us-south";
+        }
+        String org = ibmCloudConfig.getOrg();
+        String space = ibmCloudConfig.getSpace();
+
         formatter.println(formatter.info("App name: " + appName));
-        formatter.println(formatter.info("Region: " + region));
+        formatter.println(formatter.info("Region: " + finalRegion));
         formatter.println(formatter.info("Project: " + projectPath));
         formatter.println("");
 
@@ -190,42 +201,6 @@ public class DeployCommand implements Runnable {
         if (!ibmCloudExecutor.isCliInstalled()) {
             formatter.println(formatter.errorMessage("IBM Cloud CLI not found. Install it first to use deploy."));
             formatter.println(formatter.muted("https://cloud.ibm.com/docs/cli"));
-            return;
-        }
-
-        String apiKey = null;
-        String finalRegion = region;
-        String org = null;
-        String space = null;
-
-        if (configManager.hasVault()) {
-            VaultConfig vaultConfig = configManager.getVaultConfig();
-            progress.startSpinner("Fetching IBM Cloud credentials from Vault");
-            try {
-                VaultClient.IbmCloudCredentials creds = vaultClient.getIbmCloudCredentials(vaultConfig.getUrl(), vaultConfig.getToken());
-                apiKey = creds.apiKey();
-                if (creds.region() != null && !creds.region().isBlank()) {
-                    finalRegion = creds.region();
-                }
-                org = creds.org();
-                space = creds.space();
-                progress.success("Credentials retrieved");
-            } catch (Exception e) {
-                progress.error("Failed to fetch credentials from Vault");
-                formatter.println(formatter.muted(e.getMessage()));
-                return;
-            }
-            formatter.println("");
-        } else {
-            apiKey = System.getenv("IBM_CLOUD_API_KEY");
-            String envRegion = System.getenv("IBM_CLOUD_REGION");
-            if (envRegion != null && !envRegion.isBlank()) {
-                finalRegion = envRegion;
-            }
-        }
-
-        if (apiKey == null || apiKey.isBlank()) {
-            formatter.println(formatter.errorMessage("IBM Cloud API key not found. Configure Vault or set IBM_CLOUD_API_KEY."));
             return;
         }
 
@@ -272,11 +247,6 @@ public class DeployCommand implements Runnable {
 
         String buildTool = analysis.getBuildTool() != null ? analysis.getBuildTool() : "Maven";
         String buildpack = ibmCloudExecutor.detectBuildpack(analysis.getFramework() != null ? analysis.getFramework() : "java");
-        try {
-            ibmCloudExecutor.generateManifest(projectPath.toString(), appName, buildpack, 512, 1);
-        } catch (Exception e) {
-            formatter.println(formatter.warningMessage("Failed to generate manifest.yml"));
-        }
 
         progress.startSpinner("Building application (" + buildTool + ")");
         try {
@@ -290,6 +260,13 @@ public class DeployCommand implements Runnable {
             progress.error("Build failed");
             formatter.println(formatter.muted(e.getMessage()));
             return;
+        }
+
+        try {
+            String pathToPush = ibmCloudExecutor.detectDeployPath(projectPath.toString(), buildTool);
+            ibmCloudExecutor.generateManifest(projectPath.toString(), appName, buildpack, 512, 1, pathToPush, true);
+        } catch (Exception e) {
+            formatter.println(formatter.warningMessage("Failed to generate manifest.yml"));
         }
 
         progress.startSpinner("Deploying to IBM Cloud (Cloud Foundry)");
@@ -313,14 +290,15 @@ public class DeployCommand implements Runnable {
             status = null;
         }
 
-        // Step 4: Show completion
         formatter.println(formatter.success("✅ Deployment Complete!"));
         formatter.println("");
-        
-        String appUrl = String.format("https://%s.%s.cf.appdomain.cloud", appName, finalRegion);
-        formatter.println(formatter.bold("🌐 Your app is live at:"));
-        formatter.println(formatter.highlight("   " + appUrl));
-        formatter.println("");
+
+        String liveUrl = getLiveUrlFromCfOutput(status);
+        if (liveUrl != null) {
+            formatter.println(formatter.bold("🌐 Your app is live at:"));
+            formatter.println(formatter.highlight("   " + liveUrl));
+            formatter.println("");
+        }
         
         if (status != null && !status.isBlank()) {
             formatter.println(formatter.bold("📊 ibmcloud cf app output:"));
@@ -329,6 +307,35 @@ public class DeployCommand implements Runnable {
             formatter.println(formatter.separator());
             formatter.println("");
         }
+    }
+
+    private String getLiveUrlFromCfOutput(String cfAppOutput) {
+        if (cfAppOutput == null || cfAppOutput.isBlank()) {
+            return null;
+        }
+        for (String line : cfAppOutput.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            String lower = trimmed.toLowerCase();
+            if (!lower.startsWith("routes:")) {
+                continue;
+            }
+            String routes = trimmed.substring(trimmed.indexOf(':') + 1).trim();
+            if (routes.isEmpty()) {
+                return null;
+            }
+            String first = routes.split("[,\\s]+")[0].trim();
+            if (first.isEmpty()) {
+                return null;
+            }
+            if (first.startsWith("http://") || first.startsWith("https://")) {
+                return first;
+            }
+            return "https://" + first;
+        }
+        return null;
     }
 }
 

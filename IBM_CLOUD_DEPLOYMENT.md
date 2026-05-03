@@ -177,23 +177,11 @@ public class IbmCloudCredentialManager {
         return new IbmCloudCredentials(apiKey, region);
     }
     
-    public IbmCloudCredentials fetchCredentialsWithFallback() {
-        try {
-            return fetchCredentials();
-        } catch (VaultException e) {
-            // Fallback to environment variables
-            String apiKey = System.getenv("IBM_CLOUD_API_KEY");
-            String region = System.getenv("IBM_CLOUD_REGION");
-            
-            if (apiKey == null || region == null) {
-                throw new CredentialException(
-                    "Failed to fetch credentials from Vault and " +
-                    "environment variables are not set"
-                );
-            }
-            
-            return new IbmCloudCredentials(apiKey, region);
-        }
+    public IbmCloudCredentials fetchCredentialsFromLocalConfig() {
+        UserConfig userConfig = configManager.getUserConfig();
+        String apiKey = userConfig.getIbmCloud().getApiKey();
+        String region = userConfig.getIbmCloud().getRegion();
+        return new IbmCloudCredentials(apiKey, region);
     }
 }
 ```

@@ -217,39 +217,6 @@ public class ConfigurationGenerator {
         objectMapper.writeValue(metadataPath.toFile(), metadata);
     }
 
-    /**
-     * Generate .env.example file
-     */
-    public void generateEnvExample(String projectPath, ProjectAnalysis analysis) throws IOException {
-        StringBuilder envContent = new StringBuilder();
-        envContent.append("# One Piece CLI Environment Variables\n");
-        envContent.append("# Copy this file to .env and fill in your values\n\n");
-        
-        envContent.append("# OpenAI API Key (for AI features)\n");
-        envContent.append("OPENAI_API_KEY=your-openai-api-key-here\n\n");
-        
-        if (analysis.getRecommendedMcps().contains("github-mcp")) {
-            envContent.append("# GitHub Personal Access Token\n");
-            envContent.append("GITHUB_TOKEN=your-github-token-here\n\n");
-        }
-        
-        if (analysis.getRecommendedMcps().contains("postgres-mcp")) {
-            envContent.append("# Database Connection\n");
-            envContent.append("DATABASE_URL=postgresql://user:password@localhost:5432/dbname\n\n");
-        }
-        
-        envContent.append("# IBM Cloud Credentials (for deployment)\n");
-        envContent.append("IBM_CLOUD_API_KEY=your-ibm-cloud-api-key\n");
-        envContent.append("IBM_CLOUD_REGION=us-south\n\n");
-        
-        envContent.append("# HashiCorp Vault (optional - for production)\n");
-        envContent.append("VAULT_URL=https://vault.example.com\n");
-        envContent.append("VAULT_TOKEN=your-vault-token\n");
-        
-        Path envPath = Paths.get(projectPath, ".env.example");
-        Files.writeString(envPath, envContent.toString());
-    }
-
     public void generateBobProjectMcpConfig(String projectPath, Map<String, Map<String, Object>> mcpServers) throws IOException {
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("mcpServers", mcpServers);

@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -193,7 +194,10 @@ public class IbmCloudExecutor {
             }
         }
         
-        process.waitFor(30, TimeUnit.SECONDS);
+        boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+        }
     }
 
     /**
@@ -250,7 +254,15 @@ public class IbmCloudExecutor {
     /**
      * Generate manifest.yml for Cloud Foundry
      */
-    public void generateManifest(String projectPath, String appName, String buildpack, int memory, int instances) throws IOException {
+    public void generateManifest(
+        String projectPath,
+        String appName,
+        String buildpack,
+        int memory,
+        int instances,
+        String path,
+        boolean randomRoute
+    ) throws IOException {
         StringBuilder manifest = new StringBuilder();
         manifest.append("---\n");
         manifest.append("applications:\n");
@@ -261,14 +273,81 @@ public class IbmCloudExecutor {
         if (buildpack != null) {
             manifest.append("  buildpack: ").append(buildpack).append("\n");
         }
-        
-        manifest.append("  random-route: true\n");
-        manifest.append("  path: .\n");
+
+        if (randomRoute) {
+            manifest.append("  random-route: true\n");
+        }
+        String normalizedPath = (path == null || path.isBlank()) ? "." : path.trim();
+        manifest.append("  path: ").append(normalizedPath).append("\n");
         
         Path manifestPath = Paths.get(projectPath, "manifest.yml");
-        Files.writeString(manifestPath, manifest.toString());
+        Files.writeString(manifestPath, manifest.toString(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         
         formatter.println(formatter.successMessage("Generated manifest.yml"));
+    }
+
+    public String detectDeployPath(String projectPath, String buildTool) throws IOException {
+        if (buildTool == null || buildTool.isBlank()) {
+            return ".";
+        }
+
+        String tool = buildTool.trim();
+        if ("Maven".equalsIgnoreCase(tool)) {
+            return detectJarPath(projectPath, "target");
+        }
+        if ("Gradle".equalsIgnoreCase(tool)) {
+            return detectJarPath(projectPath, "build/libs");
+        }
+        if ("npm".equalsIgnoreCase(tool)) {
+            Path dist = Paths.get(projectPath, "dist");
+            if (Files.exists(dist) && Files.isDirectory(dist)) {
+                return "dist";
+            }
+            return ".";
+        }
+
+        return ".";
+    }
+
+    private String detectJarPath(String projectPath, String relativeDir) throws IOException {
+        Path dir = Paths.get(projectPath, relativeDir);
+        if (!Files.exists(dir) || !Files.isDirectory(dir)) {
+            return ".";
+        }
+
+        String bestName = null;
+        long bestSize = -1;
+
+        try (var stream = Files.list(dir)) {
+            for (Path p : (Iterable<Path>) stream::iterator) {
+                if (!Files.isRegularFile(p)) {
+                    continue;
+                }
+                String name = p.getFileName().toString();
+                if (!name.endsWith(".jar")) {
+                    continue;
+                }
+                String lower = name.toLowerCase();
+                if (lower.endsWith("-sources.jar") || lower.endsWith("-javadoc.jar") || lower.startsWith("original-")) {
+                    continue;
+                }
+                long size;
+                try {
+                    size = Files.size(p);
+                } catch (Exception e) {
+                    size = 0;
+                }
+                if (size > bestSize) {
+                    bestSize = size;
+                    bestName = name;
+                }
+            }
+        }
+
+        if (bestName == null) {
+            return ".";
+        }
+        return relativeDir + "/" + bestName;
     }
 
     /**

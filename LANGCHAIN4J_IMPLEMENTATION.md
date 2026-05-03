@@ -228,7 +228,7 @@ public class ProjectAnalyzerService {
         List<String> configPatterns = List.of(
             "pom.xml", "build.gradle", "package.json", "requirements.txt",
             "application.properties", "application.yml", "Dockerfile",
-            "docker-compose.yml", ".env.example"
+            "docker-compose.yml"
         );
         
         return configPatterns.stream()

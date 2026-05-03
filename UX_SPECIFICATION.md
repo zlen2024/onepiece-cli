@@ -206,12 +206,16 @@ This follows a "Bring Your Own Vault" (BYOV) approach.
 
 **If No:**
 ```
-ℹ️  Alternative: Local .env file (Not recommended for production)
+☁️  IBM Cloud Deployment Credentials
 
-For POC purposes, you can store credentials locally.
-⚠️  Warning: Credentials will be stored in plain text
+? Enter your IBM Cloud API key: ****************************************
+? Default region (press Enter to skip): us-south
+? Default Cloud Foundry org (press Enter to skip):
+? Default Cloud Foundry space (press Enter to skip):
 
-? Use local .env file instead? (y/N)
+💾 Saving configuration to ~/.onepiece/config.json
+
+✅ IBM Cloud credentials saved successfully!
 ```
 
 **Settings Menu (Vault Already Configured)**
@@ -224,6 +228,7 @@ Current Configuration:
    Last verified: 2 minutes ago
 
 ? What would you like to do? (Use arrow keys)
+  ☁️ IBM Cloud Deployment Credentials
   🔄 Update Vault configuration
   🧪 Test connection
   📋 Show stored secrets (masked)

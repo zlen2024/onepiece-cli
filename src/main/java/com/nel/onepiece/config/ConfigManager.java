@@ -3,6 +3,7 @@ package com.nel.onepiece.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.nel.onepiece.model.config.AIProviderConfig;
+import com.nel.onepiece.model.config.IbmCloudConfig;
 import com.nel.onepiece.model.config.OnePieceConfig;
 import com.nel.onepiece.model.config.VaultConfig;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -119,6 +120,17 @@ public class ConfigManager {
         saveConfig(config);
     }
 
+    public IbmCloudConfig getIbmCloudConfig() {
+        OnePieceConfig config = getCachedOrLoadConfig();
+        return config.getIbmCloud();
+    }
+
+    public void updateIbmCloudConfig(IbmCloudConfig ibmCloudConfig) throws IOException {
+        OnePieceConfig config = getCachedOrLoadConfig();
+        config.setIbmCloud(ibmCloudConfig);
+        saveConfig(config);
+    }
+
     /**
      * Check if AI provider is configured
      */
@@ -133,6 +145,11 @@ public class ConfigManager {
     public boolean hasVault() {
         OnePieceConfig config = getCachedOrLoadConfig();
         return config.hasVault();
+    }
+
+    public boolean hasIbmCloud() {
+        OnePieceConfig config = getCachedOrLoadConfig();
+        return config.hasIbmCloud();
     }
 
     /**
