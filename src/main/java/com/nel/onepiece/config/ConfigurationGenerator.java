@@ -247,6 +247,140 @@ public class ConfigurationGenerator {
         Path envPath = Paths.get(projectPath, ".env.example");
         Files.writeString(envPath, envContent.toString());
     }
+
+    public void generateBobProjectMcpConfig(String projectPath, List<String> mcpNames, Map<String, String> envVarNames) throws IOException {
+        Map<String, Object> root = new LinkedHashMap<>();
+        Map<String, Object> servers = new LinkedHashMap<>();
+
+        for (String mcpName : mcpNames) {
+            Map<String, Object> server = new LinkedHashMap<>();
+            server.put("disabled", false);
+            server.put("cwd", projectPath);
+
+            switch (mcpName) {
+                case "filesystem-mcp":
+                    server.put("command", "npx");
+                    server.put("args", List.of("-y", "@modelcontextprotocol/server-filesystem", projectPath));
+                    break;
+                case "github-mcp":
+                    server.put("command", "npx");
+                    server.put("args", List.of("-y", "@modelcontextprotocol/server-github"));
+                    server.put("env", Map.of(
+                        "GITHUB_PERSONAL_ACCESS_TOKEN",
+                        "${" + envVarNames.getOrDefault("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN") + "}"
+                    ));
+                    break;
+                case "maven-mcp":
+                    server.put("command", "npx");
+                    server.put("args", List.of("-y", "@modelcontextprotocol/server-maven", projectPath));
+                    break;
+                case "gradle-mcp":
+                    server.put("command", "npx");
+                    server.put("args", List.of("-y", "@modelcontextprotocol/server-gradle", projectPath));
+                    break;
+                case "npm-mcp":
+                    server.put("command", "npx");
+                    server.put("args", List.of("-y", "@modelcontextprotocol/server-npm", projectPath));
+                    break;
+                case "postgres-mcp":
+                    server.put("command", "npx");
+                    server.put("args", List.of("-y", "@modelcontextprotocol/server-postgres"));
+                    server.put("env", Map.of(
+                        "POSTGRES_CONNECTION_STRING",
+                        "${" + envVarNames.getOrDefault("POSTGRES_CONNECTION_STRING", "DATABASE_URL") + "}"
+                    ));
+                    break;
+                case "docker-mcp":
+                    server.put("command", "npx");
+                    server.put("args", List.of("-y", "@modelcontextprotocol/server-docker"));
+                    break;
+                default:
+                    server.put("command", "npx");
+                    server.put("args", List.of("-y", mcpName));
+            }
+
+            servers.put(mcpName, server);
+        }
+
+        root.put("mcpServers", servers);
+
+        Path bobDir = Paths.get(projectPath, ".bob");
+        Files.createDirectories(bobDir);
+        Path mcpPath = bobDir.resolve("mcp.json");
+        objectMapper.writeValue(mcpPath.toFile(), root);
+    }
+
+    public void generateBobCustomModes(String projectPath, String workflow) throws IOException {
+        Path bobDir = Paths.get(projectPath, ".bob");
+        Files.createDirectories(bobDir);
+
+        String yaml = """
+customModes:
+  - slug: poc-architect
+    name: 🧭 PoC Architect
+    roleDefinition: You are a pragmatic software architect. Focus on proof-of-concept delivery, clear decisions, and minimal risk.
+    whenToUse: Use for architecture decisions, repo analysis, and planning execution steps.
+    customInstructions: Follow the project workflow: %s. Prefer safe, incremental changes and verify each step.
+    groups:
+      - read
+      - browser
+      - mcp
+
+  - slug: deploy-engineer
+    name: ☁️ Deploy Engineer
+    roleDefinition: You are a DevOps engineer specialized in IBM Cloud deployments and CLI automation.
+    whenToUse: Use for deployment, CI/CD, and troubleshooting IBM Cloud issues.
+    customInstructions: Follow the project workflow: %s. Do not print or persist secrets. Prefer reproducible commands.
+    groups:
+      - read
+      - edit
+      - command
+      - mcp
+
+  - slug: docs-writer
+    name: 📝 Documentation Writer
+    roleDefinition: You are a technical writer specializing in concise, accurate documentation.
+    whenToUse: Use for writing README, setup guides, and runbooks.
+    customInstructions: Write clear steps and expected outcomes. Keep docs consistent with the PoC scope.
+    groups:
+      - read
+      - - edit
+        fileRegex: \\.(md|mdx)$
+        description: Markdown files only
+""".formatted(workflow, workflow);
+
+        Files.writeString(bobDir.resolve("custom_modes.yaml"), yaml);
+    }
+
+    public void generateBobRules(String projectPath, String workflow, List<String> skills, List<String> mcps) throws IOException {
+        Path rulesDir = Paths.get(projectPath, ".bob", "rules");
+        Files.createDirectories(rulesDir);
+
+        String rules = """
+# One Piece CLI - Bob Workspace Rules
+
+## Workflow
+- Project workflow: %s
+- Focus on proof-of-concept functionality first.
+- Verify outputs (generated files, command results) after every change.
+
+## Tools
+- Use MCP servers only when needed; disable unused servers/tools to reduce context.
+- Do not store secrets in repository files. Use environment variables or Vault.
+
+## Skills
+- Enabled skills: %s
+
+## MCP Servers
+- Enabled MCP servers: %s
+""".formatted(
+            workflow,
+            String.join(", ", skills),
+            String.join(", ", mcps)
+        );
+
+        Files.writeString(rulesDir.resolve("01-workspace.md"), rules);
+    }
 }
 
 // Made with Bob

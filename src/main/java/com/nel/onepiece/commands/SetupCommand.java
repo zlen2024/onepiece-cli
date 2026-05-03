@@ -14,8 +14,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Setup command - Bootstrap AI agent environment
@@ -166,6 +168,32 @@ public class SetupCommand implements Runnable {
         }
         formatter.println("");
 
+        String workflow = "agile";
+        if (!nonInteractive) {
+            formatter.println(formatter.bold("? Select project workflow:"));
+            formatter.println("");
+            formatter.println("  1. Agile");
+            formatter.println("  2. Spiral");
+            formatter.println("  3. Waterfall");
+            formatter.println("  4. Other");
+            formatter.println("");
+            String input = menu.promptInput("Select option (1-4)");
+            if (input != null) {
+                switch (input.trim()) {
+                    case "1" -> workflow = "agile";
+                    case "2" -> workflow = "spiral";
+                    case "3" -> workflow = "waterfall";
+                    case "4" -> {
+                        String other = menu.promptInput("Enter workflow name");
+                        if (other != null && !other.trim().isEmpty()) {
+                            workflow = other.trim();
+                        }
+                    }
+                }
+            }
+            formatter.println("");
+        }
+
         progress.startSpinner("Generating configuration");
         List<String> skills;
         String systemPrompt;
@@ -182,15 +210,84 @@ public class SetupCommand implements Runnable {
             return;
         }
 
+        List<String> selectedSkills = skills;
+        if (!nonInteractive) {
+            formatter.println("");
+            formatter.println(formatter.bold("? Skills selection:"));
+            formatter.println(formatter.muted("Recommended: " + String.join(", ", skills)));
+            boolean useRecommended = menu.promptConfirm("Use recommended skills?", true);
+            if (!useRecommended) {
+                String custom = menu.promptInput("Enter skills (comma-separated)");
+                if (custom != null && !custom.trim().isEmpty()) {
+                    List<String> parsed = new ArrayList<>();
+                    for (String part : custom.split(",")) {
+                        String s = part.trim();
+                        if (!s.isEmpty()) {
+                            parsed.add(s);
+                        }
+                    }
+                    LinkedHashSet<String> normalized = new LinkedHashSet<>(parsed);
+                    normalized.add("bug-hunter");
+                    normalized.add("context7-auto-research");
+                    selectedSkills = new ArrayList<>(normalized);
+                }
+            }
+            formatter.println("");
+        }
+
+        List<String> selectedMcps = analysis.getRecommendedMcps() != null ? new ArrayList<>(analysis.getRecommendedMcps()) : List.of("filesystem-mcp");
+        Map<String, String> envVarNames = new HashMap<>();
+        if (!nonInteractive) {
+            formatter.println(formatter.bold("? MCP selection:"));
+            formatter.println(formatter.muted("Recommended: " + String.join(", ", selectedMcps)));
+            boolean useRecommended = menu.promptConfirm("Use recommended MCP servers?", true);
+            if (!useRecommended) {
+                String custom = menu.promptInput("Enter MCP server names (comma-separated)");
+                if (custom != null && !custom.trim().isEmpty()) {
+                    List<String> parsed = new ArrayList<>();
+                    for (String part : custom.split(",")) {
+                        String s = part.trim();
+                        if (!s.isEmpty()) {
+                            parsed.add(s);
+                        }
+                    }
+                    if (!parsed.contains("filesystem-mcp")) {
+                        parsed.add(0, "filesystem-mcp");
+                    }
+                    selectedMcps = parsed;
+                }
+            }
+
+            if (selectedMcps.contains("github-mcp")) {
+                String v = menu.promptInput("Env var name for GitHub token (default: GITHUB_TOKEN)");
+                if (v != null && !v.trim().isEmpty()) {
+                    envVarNames.put("GITHUB_PERSONAL_ACCESS_TOKEN", v.trim());
+                }
+            }
+            if (selectedMcps.contains("postgres-mcp")) {
+                String v = menu.promptInput("Env var name for Postgres connection (default: DATABASE_URL)");
+                if (v != null && !v.trim().isEmpty()) {
+                    envVarNames.put("POSTGRES_CONNECTION_STRING", v.trim());
+                }
+            }
+            formatter.println("");
+        }
+
         boolean wroteBobConfig = false;
         try {
+            ProjectAnalysis analysisForConfig = analysis;
+            analysisForConfig.setRecommendedMcps(selectedMcps);
+
             if (agent == AgentType.BOB) {
-                configurationGenerator.generateBobWorkspace(projectPath.toString(), analysis, systemPrompt, skills);
+                configurationGenerator.generateBobWorkspace(projectPath.toString(), analysisForConfig, systemPrompt, selectedSkills);
+                configurationGenerator.generateBobProjectMcpConfig(projectPath.toString(), selectedMcps, envVarNames);
+                configurationGenerator.generateBobCustomModes(projectPath.toString(), workflow);
+                configurationGenerator.generateBobRules(projectPath.toString(), workflow, selectedSkills, selectedMcps);
                 wroteBobConfig = true;
             }
-            configurationGenerator.generateMcpRegistry(projectPath.toString(), analysis);
-            configurationGenerator.generateProjectMetadata(projectPath.toString(), analysis, agent.name().toLowerCase());
-            configurationGenerator.generateEnvExample(projectPath.toString(), analysis);
+            configurationGenerator.generateMcpRegistry(projectPath.toString(), analysisForConfig);
+            configurationGenerator.generateProjectMetadata(projectPath.toString(), analysisForConfig, agent.name().toLowerCase());
+            configurationGenerator.generateEnvExample(projectPath.toString(), analysisForConfig);
         } catch (Exception e) {
             formatter.println("");
             formatter.println(formatter.errorMessage("Failed to write configuration files: " + e.getMessage()));
@@ -204,6 +301,9 @@ public class SetupCommand implements Runnable {
         formatter.println(formatter.bold("📝 Generated files:"));
         if (wroteBobConfig) {
             formatter.println(formatter.successMessage("   • .bob.workspace (IBM Bob configuration)"));
+            formatter.println(formatter.successMessage("   • .bob/mcp.json (Bob MCP servers)"));
+            formatter.println(formatter.successMessage("   • .bob/custom_modes.yaml (Bob custom modes)"));
+            formatter.println(formatter.successMessage("   • .bob/rules/01-workspace.md (Bob custom rules)"));
         }
         formatter.println(formatter.successMessage("   • .onepiece/mcp-registry.json (MCP server list)"));
         formatter.println(formatter.successMessage("   • .onepiece/project.json (project metadata)"));
