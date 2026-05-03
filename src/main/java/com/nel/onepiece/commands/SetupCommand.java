@@ -551,7 +551,8 @@ public class SetupCommand implements Runnable {
     }
 
     private static class BobSetupState {
-        AgentPreset agentPreset;
+        List<AgentPreset> agentPresets = new ArrayList<>();
+        AgentPreset primaryAgent;
         List<String> skillSlugs = new ArrayList<>();
         List<String> mcpNames = new ArrayList<>();
         String githubTokenEnv = "GITHUB_TOKEN";
@@ -564,7 +565,9 @@ public class SetupCommand implements Runnable {
 
         BobSetupState state = new BobSetupState();
         if (!library.getAgents().isEmpty()) {
-            state.agentPreset = library.getAgents().get(0);
+            AgentPreset first = library.getAgents().get(0);
+            state.agentPresets.add(first);
+            state.primaryAgent = first;
         }
         if (library.getSkills().stream().anyMatch(s -> "bug-hunter".equals(s.getSlug()))) {
             state.skillSlugs.add("bug-hunter");
@@ -590,7 +593,7 @@ public class SetupCommand implements Runnable {
             formatter.println("");
 
             formatter.println(formatter.bold("Current selection:"));
-            formatter.println("   Agent: " + (state.agentPreset != null ? state.agentPreset.getDisplayName() : "(not set)"));
+            formatter.println("   Agents: " + state.agentPresets.size() + (state.primaryAgent != null ? " (primary: " + state.primaryAgent.getDisplayName() + ")" : ""));
             formatter.println("   Skills: " + state.skillSlugs.size());
             formatter.println("   MCP: " + state.mcpNames.size());
             formatter.println("   Generated: " + (state.generated ? "yes" : "no"));
@@ -645,120 +648,51 @@ public class SetupCommand implements Runnable {
             .filter(a -> a != null && "bob".equalsIgnoreCase(a.getAgentType()))
             .toList();
 
-        int i = 1;
-        for (AgentPreset p : presets) {
-            formatter.println(String.format("  %d. %s - %s", i, safe(p.getDisplayName()), safe(p.getDescription())));
-            i++;
+        formatter.println("  0. [ ] none");
+        for (int i = 0; i < presets.size(); i++) {
+            AgentPreset p = presets.get(i);
+            boolean selected = state.agentPresets.stream().anyMatch(a -> a != null && safe(p.getId()).equals(a.getId()));
+            boolean primary = state.primaryAgent != null && safe(p.getId()).equals(state.primaryAgent.getId());
+            formatter.println(String.format(
+                "  %d. [%s] %s%s - %s",
+                i + 1,
+                selected ? "x" : " ",
+                safe(p.getDisplayName()),
+                primary ? " (primary)" : "",
+                safe(p.getDescription())
+            ));
         }
-
-        int customIndex = i;
-        formatter.println(String.format("  %d. Custom agent", customIndex));
-        int backIndex = customIndex + 1;
-        formatter.println(String.format("  %d. Back", backIndex));
+        formatter.println("");
+        formatter.println("  C. Custom agent");
+        formatter.println("  B. Back");
         formatter.println("");
 
-        String input = menu.promptInput("Select option (1-" + backIndex + ")");
+        String input = menu.promptInput("Select agents (comma-separated), or C/B");
         if (input == null) {
             formatter.println(formatter.errorMessage("Invalid input"));
             return;
         }
-
-        int choice;
-        try {
-            choice = Integer.parseInt(input.trim());
-        } catch (NumberFormatException e) {
-            formatter.println(formatter.errorMessage("Invalid input"));
+        String trimmed = input.trim();
+        if (trimmed.isEmpty()) {
             return;
         }
 
-        if (choice >= 1 && choice < customIndex) {
-            state.agentPreset = presets.get(choice - 1);
+        if ("b".equalsIgnoreCase(trimmed)) {
             return;
         }
 
-        if (choice == customIndex) {
-            String userRequest = menu.promptInput("Describe your custom agent");
-            if (userRequest == null || userRequest.trim().isEmpty()) {
-                formatter.println(formatter.errorMessage("Description is required"));
+        if ("c".equalsIgnoreCase(trimmed)) {
+            AgentPreset custom = buildCustomAgent(projectPath, analysis, library);
+            if (custom == null) {
                 return;
             }
 
-            String displayName = null;
-            String systemPrompt = null;
-
-            if (aiProviderService.isConfigured()) {
-                progress.startSpinner("Building custom agent with AI");
-                try {
-                    String projectContext = String.format(
-                        "Project: %s\nLanguage: %s\nFramework: %s\nBuild tool: %s",
-                        projectPath,
-                        analysis.getLanguage(),
-                        analysis.getFramework(),
-                        analysis.getBuildTool()
-                    );
-                    String json = agentPresetBuilderAI.buildAgent(projectContext, userRequest.trim());
-                    progress.stopSpinner();
-
-                    ObjectMapper mapper = new ObjectMapper();
-                    JsonNode node = mapper.readTree(json);
-                    displayName = node.hasNonNull("displayName") ? node.get("displayName").asText() : null;
-                    systemPrompt = node.hasNonNull("systemPrompt") ? node.get("systemPrompt").asText() : null;
-                } catch (Exception e) {
-                    progress.stopSpinner();
-                    formatter.println(formatter.warningMessage("AI generation failed; please enter values manually."));
-                }
-            }
-
-            if (displayName == null || displayName.isBlank()) {
-                displayName = menu.promptInput("Agent name");
-            }
-            if (displayName == null || displayName.isBlank()) {
-                formatter.println(formatter.errorMessage("Agent name is required"));
-                return;
-            }
-
-            if (systemPrompt == null || systemPrompt.isBlank()) {
-                systemPrompt = menu.promptInput("System prompt");
-            }
-            if (systemPrompt == null || systemPrompt.isBlank()) {
-                formatter.println(formatter.errorMessage("System prompt is required"));
-                return;
-            }
-
-            AgentPreset preset = new AgentPreset();
-            preset.setAgentType("bob");
-            preset.setDisplayName(displayName.trim());
-            preset.setDescription("Custom agent");
-            preset.setSystemPrompt(systemPrompt.trim());
-
-            String baseId = slugify(displayName);
-            String id = baseId;
-            int suffix = 2;
-            while (true) {
-                final String candidate = id;
-                boolean exists = library.getAgents().stream().anyMatch(a -> a != null && candidate.equals(a.getId()));
-                if (!exists) {
-                    break;
-                }
-                id = baseId + "-" + suffix;
-                suffix++;
-            }
-            preset.setId(id);
-
-            AgentPreset.CustomMode mode = new AgentPreset.CustomMode();
-            mode.setSlug(id);
-            mode.setName(displayName.trim());
-            mode.setRoleDefinition("Custom agent");
-            mode.setWhenToUse("Use when you want this custom behavior.");
-            mode.setCustomInstructions(systemPrompt.trim());
-            mode.setGroups(List.of("read", "edit", "command", "mcp"));
-            preset.setCustomMode(mode);
-
-            state.agentPreset = preset;
+            state.agentPresets.add(custom);
+            state.primaryAgent = custom;
 
             boolean save = menu.promptConfirm("Save this agent to presets library?", true);
             if (save) {
-                presetLibraryManager.upsertAgent(library, preset);
+                presetLibraryManager.upsertAgent(library, custom);
                 try {
                     presetLibraryManager.save(library);
                     presetLibraryManager.exportTemplates(library);
@@ -769,10 +703,39 @@ public class SetupCommand implements Runnable {
             return;
         }
 
-        if (choice == backIndex) {
+        List<Integer> choices = new ArrayList<>();
+        for (String part : trimmed.split(",")) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            try {
+                choices.add(Integer.parseInt(p));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        if (choices.contains(0)) {
+            state.agentPresets = new ArrayList<>();
+            state.primaryAgent = null;
             return;
         }
-        formatter.println(formatter.errorMessage("Invalid selection"));
+
+        List<AgentPreset> selected = new ArrayList<>();
+        for (int idx : choices) {
+            if (idx < 1 || idx > presets.size()) {
+                continue;
+            }
+            selected.add(presets.get(idx - 1));
+        }
+
+        if (selected.isEmpty()) {
+            formatter.println(formatter.errorMessage("Select at least one agent, or choose 0 for none"));
+            return;
+        }
+
+        state.agentPresets = selected;
+        state.primaryAgent = selected.get(0);
     }
 
     private void selectBobSkills(PresetLibrary library, BobSetupState state) {
@@ -785,6 +748,7 @@ public class SetupCommand implements Runnable {
             return;
         }
 
+        formatter.println("  0. [ ] none");
         for (int i = 0; i < skills.size(); i++) {
             SkillPreset s = skills.get(i);
             boolean enabled = state.skillSlugs.contains(s.getSlug());
@@ -792,7 +756,7 @@ public class SetupCommand implements Runnable {
         }
 
         formatter.println("");
-        String input = menu.promptInput("Enter skill numbers (comma-separated), or press Enter to keep");
+        String input = menu.promptInput("Enter skill numbers (comma-separated), 0 for none, or press Enter to keep");
         if (input == null) {
             formatter.println(formatter.errorMessage("Invalid input"));
             return;
@@ -801,11 +765,20 @@ public class SetupCommand implements Runnable {
             return;
         }
 
+        if (input.trim().equals("0")) {
+            state.skillSlugs = new ArrayList<>();
+            return;
+        }
+
         List<String> selected = new ArrayList<>();
         for (String part : input.split(",")) {
             String p = part.trim();
             if (p.isEmpty()) {
                 continue;
+            }
+            if (p.equals("0")) {
+                state.skillSlugs = new ArrayList<>();
+                return;
             }
             try {
                 int idx = Integer.parseInt(p);
@@ -832,6 +805,7 @@ public class SetupCommand implements Runnable {
             return;
         }
 
+        formatter.println("  0. [ ] none");
         for (int i = 0; i < mcps.size(); i++) {
             McpPreset m = mcps.get(i);
             boolean enabled = state.mcpNames.contains(m.getName());
@@ -839,7 +813,7 @@ public class SetupCommand implements Runnable {
         }
 
         formatter.println("");
-        String input = menu.promptInput("Enter MCP numbers (comma-separated), or press Enter to keep");
+        String input = menu.promptInput("Enter MCP numbers (comma-separated), 0 for none, or press Enter to keep");
         if (input == null) {
             formatter.println(formatter.errorMessage("Invalid input"));
             return;
@@ -848,11 +822,20 @@ public class SetupCommand implements Runnable {
             return;
         }
 
+        if (input.trim().equals("0")) {
+            state.mcpNames = new ArrayList<>();
+            return;
+        }
+
         List<String> selected = new ArrayList<>();
         for (String part : input.split(",")) {
             String p = part.trim();
             if (p.isEmpty()) {
                 continue;
+            }
+            if (p.equals("0")) {
+                state.mcpNames = new ArrayList<>();
+                return;
             }
             try {
                 int idx = Integer.parseInt(p);
@@ -864,10 +847,6 @@ public class SetupCommand implements Runnable {
                 }
             } catch (NumberFormatException ignored) {
             }
-        }
-
-        if (!selected.contains("filesystem-mcp") && mcps.stream().anyMatch(m -> "filesystem-mcp".equals(m.getName()))) {
-            selected.add(0, "filesystem-mcp");
         }
 
         state.mcpNames = selected;
@@ -888,13 +867,8 @@ public class SetupCommand implements Runnable {
     }
 
     private boolean generateBobFromWizard(Path projectPath, ProjectAnalysis analysis, PresetLibrary library, BobSetupState state) {
-        if (state.agentPreset == null) {
-            formatter.println(formatter.errorMessage("Select an agent first"));
-            return false;
-        }
-
-        if (state.mcpNames.isEmpty()) {
-            formatter.println(formatter.errorMessage("Select at least one MCP preset"));
+        if (state.primaryAgent == null || state.agentPresets.isEmpty()) {
+            formatter.println(formatter.errorMessage("Select at least one agent first"));
             return false;
         }
 
@@ -940,14 +914,20 @@ public class SetupCommand implements Runnable {
             configurationGenerator.generateBobWorkspace(
                 projectPath.toString(),
                 analysisForConfig,
-                state.agentPreset.getSystemPrompt(),
+                state.primaryAgent.getSystemPrompt(),
                 new ArrayList<>(state.skillSlugs),
                 modelName,
                 temperature,
                 maxTokens
             );
             configurationGenerator.generateBobProjectMcpConfig(projectPath.toString(), bobMcpServers);
-            configurationGenerator.generateBobCustomModesFromPresets(projectPath.toString(), List.of(state.agentPreset.getCustomMode()));
+            List<AgentPreset.CustomMode> modes = new ArrayList<>();
+            for (AgentPreset agent : state.agentPresets) {
+                if (agent != null && agent.getCustomMode() != null) {
+                    modes.add(agent.getCustomMode());
+                }
+            }
+            configurationGenerator.generateBobCustomModesFromPresets(projectPath.toString(), modes);
             configurationGenerator.generateBobSkillsFromPresets(projectPath.toString(), skillPresets);
             configurationGenerator.generateBobRules(projectPath.toString(), "agile", new ArrayList<>(state.skillSlugs), new ArrayList<>(state.mcpNames));
 
@@ -970,11 +950,92 @@ public class SetupCommand implements Runnable {
         formatter.println(formatter.successMessage("   • .bob/mcp.json"));
         formatter.println(formatter.successMessage("   • .bob/custom_modes.yaml"));
         formatter.println(formatter.successMessage("   • .bob/rules/01-workspace.md"));
-        formatter.println(formatter.successMessage("   • .bob/skills/**/SKILL.md"));
+        formatter.println(formatter.successMessage("   • .bob/skills/**/SKILL.md (if selected)"));
         formatter.println(formatter.successMessage("   • .onepiece/mcp-registry.json"));
         formatter.println(formatter.successMessage("   • .onepiece/project.json"));
         formatter.println(formatter.successMessage("   • .env.example"));
         return true;
+    }
+
+    private AgentPreset buildCustomAgent(Path projectPath, ProjectAnalysis analysis, PresetLibrary library) {
+        String userRequest = menu.promptInput("Describe your custom agent");
+        if (userRequest == null || userRequest.trim().isEmpty()) {
+            formatter.println(formatter.errorMessage("Description is required"));
+            return null;
+        }
+
+        String displayName = null;
+        String systemPrompt = null;
+
+        if (aiProviderService.isConfigured()) {
+            progress.startSpinner("Building custom agent with AI");
+            try {
+                String projectContext = String.format(
+                    "Project: %s\nLanguage: %s\nFramework: %s\nBuild tool: %s",
+                    projectPath,
+                    analysis.getLanguage(),
+                    analysis.getFramework(),
+                    analysis.getBuildTool()
+                );
+                String json = agentPresetBuilderAI.buildAgent(projectContext, userRequest.trim());
+                progress.stopSpinner();
+
+                ObjectMapper mapper = new ObjectMapper();
+                JsonNode node = mapper.readTree(json);
+                displayName = node.hasNonNull("displayName") ? node.get("displayName").asText() : null;
+                systemPrompt = node.hasNonNull("systemPrompt") ? node.get("systemPrompt").asText() : null;
+            } catch (Exception e) {
+                progress.stopSpinner();
+                formatter.println(formatter.warningMessage("AI generation failed; please enter values manually."));
+            }
+        }
+
+        if (displayName == null || displayName.isBlank()) {
+            displayName = menu.promptInput("Agent name");
+        }
+        if (displayName == null || displayName.isBlank()) {
+            formatter.println(formatter.errorMessage("Agent name is required"));
+            return null;
+        }
+
+        if (systemPrompt == null || systemPrompt.isBlank()) {
+            systemPrompt = menu.promptInput("System prompt");
+        }
+        if (systemPrompt == null || systemPrompt.isBlank()) {
+            formatter.println(formatter.errorMessage("System prompt is required"));
+            return null;
+        }
+
+        AgentPreset preset = new AgentPreset();
+        preset.setAgentType("bob");
+        preset.setDisplayName(displayName.trim());
+        preset.setDescription("Custom agent");
+        preset.setSystemPrompt(systemPrompt.trim());
+
+        String baseId = slugify(displayName);
+        String id = baseId;
+        int suffix = 2;
+        while (true) {
+            final String candidate = id;
+            boolean exists = library.getAgents().stream().anyMatch(a -> a != null && candidate.equals(a.getId()));
+            if (!exists) {
+                break;
+            }
+            id = baseId + "-" + suffix;
+            suffix++;
+        }
+        preset.setId(id);
+
+        AgentPreset.CustomMode mode = new AgentPreset.CustomMode();
+        mode.setSlug(id);
+        mode.setName(displayName.trim());
+        mode.setRoleDefinition("Custom agent");
+        mode.setWhenToUse("Use when you want this custom behavior.");
+        mode.setCustomInstructions(systemPrompt.trim());
+        mode.setGroups(List.of("read", "edit", "command", "mcp"));
+        preset.setCustomMode(mode);
+
+        return preset;
     }
 
     private void printStartBobInstructions(Path projectPath, BobSetupState state) {
